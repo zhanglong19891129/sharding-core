@@ -1,11 +1,9 @@
 ﻿using ShardingCore.Exceptions;
 using ShardingCore.Extensions;
 using ShardingCore.Sharding.Abstractions;
-using ShardingCore.Sharding.MergeEngines.Abstractions.InMemoryMerge;
 using ShardingCore.Sharding.MergeEngines.EnumeratorStreamMergeEngines;
 using ShardingCore.Sharding.ShardingExecutors.Abstractions;
 using ShardingCore.Sharding.StreamMergeEngines;
-using ShardingCore.Sharding.StreamMergeEngines.AggregateMergeEngines;
 using System;
 using System.Linq;
 using System.Linq.Expressions;
@@ -14,6 +12,10 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using ShardingCore.Core;
 using ShardingCore.Extensions.InternalExtensions;
+
+using ShardingCore.Sharding.MergeEngines;
+using ShardingCore.Sharding.MergeEngines.ShardingMergeEngines;
+using ShardingCore.Sharding.MergeEngines.ShardingMergeEngines.Abstractions.InMemoryMerge;
 #if EFCORE2
 using Microsoft.EntityFrameworkCore.Internal;
 #endif
@@ -29,13 +31,13 @@ namespace ShardingCore.Sharding.ShardingQueryExecutors
     */
     public class DefaultShardingQueryExecutor : IShardingQueryExecutor
     {
-        private readonly ILogger<DefaultShardingQueryExecutor> _logger;
+        private readonly IStreamMergeContextFactory _streamMergeContextFactory;
 
-        public DefaultShardingQueryExecutor(ILogger<DefaultShardingQueryExecutor> logger)
+
+        public DefaultShardingQueryExecutor(IStreamMergeContextFactory streamMergeContextFactory)
         {
-            _logger = logger;
+            _streamMergeContextFactory = streamMergeContextFactory;
         }
-
         public TResult Execute<TResult>(IMergeQueryCompilerContext mergeQueryCompilerContext)
         {
             //如果根表达式为tolist toarray getenumerator等表示需要迭代
@@ -53,13 +55,11 @@ namespace ShardingCore.Sharding.ShardingQueryExecutors
             if (mergeQueryCompilerContext.IsEnumerableQuery())
             {
                 return EnumerableExecute<TResult>(mergeQueryCompilerContext);
-
             }
 
             if (typeof(TResult).HasImplementedRawGeneric(typeof(Task<>)))
             {
                 return DoExecute<TResult>(mergeQueryCompilerContext, true, cancellationToken);
-
             }
 
 
@@ -68,23 +68,21 @@ namespace ShardingCore.Sharding.ShardingQueryExecutors
         }
         private TResult DoExecute<TResult>(IMergeQueryCompilerContext mergeQueryCompilerContext, bool async, CancellationToken cancellationToken = new CancellationToken())
         {
-
-            if (mergeQueryCompilerContext.GetQueryExpression() is MethodCallExpression methodCallExpression)
-            {
-                switch (methodCallExpression.Method.Name)
+                var queryMethodName = mergeQueryCompilerContext.GetQueryMethodName();
+                switch (queryMethodName)
                 {
                     case nameof(Enumerable.First):
-                        return EnsureResultTypeMergeExecute<TResult>(typeof(FirstAsyncInMemoryMergeEngine<>), mergeQueryCompilerContext, async, cancellationToken);
+                        return EnsureResultTypeMergeExecute<TResult>(typeof(FirstSkipAsyncInMemoryMergeEngine<>), mergeQueryCompilerContext, async, cancellationToken);
                     case nameof(Enumerable.FirstOrDefault):
-                        return EnsureResultTypeMergeExecute<TResult>(typeof(FirstOrDefaultAsyncInMemoryMergeEngine<>), mergeQueryCompilerContext, async, cancellationToken);
+                        return EnsureResultTypeMergeExecute<TResult>(typeof(FirstOrDefaultSkipAsyncInMemoryMergeEngine<>), mergeQueryCompilerContext, async, cancellationToken);
                     case nameof(Enumerable.Last):
-                        return EnsureResultTypeMergeExecute<TResult>(typeof(LastAsyncInMemoryMergeEngine<>), mergeQueryCompilerContext, async, cancellationToken);
+                        return EnsureResultTypeMergeExecute<TResult>(typeof(LastSkipAsyncInMemoryMergeEngine<>), mergeQueryCompilerContext, async, cancellationToken);
                     case nameof(Enumerable.LastOrDefault):
-                        return EnsureResultTypeMergeExecute<TResult>(typeof(LastOrDefaultAsyncInMemoryMergeEngine<>), mergeQueryCompilerContext, async, cancellationToken);
+                        return EnsureResultTypeMergeExecute<TResult>(typeof(LastOrDefaultSkipAsyncInMemoryMergeEngine<>), mergeQueryCompilerContext, async, cancellationToken);
                     case nameof(Enumerable.Single):
-                        return EnsureResultTypeMergeExecute<TResult>(typeof(SingleAsyncInMemoryMergeEngine<>), mergeQueryCompilerContext, async, cancellationToken);
+                        return EnsureResultTypeMergeExecute<TResult>(typeof(SingleSkipAsyncInMemoryMergeEngine<>), mergeQueryCompilerContext, async, cancellationToken);
                     case nameof(Enumerable.SingleOrDefault):
-                        return EnsureResultTypeMergeExecute<TResult>(typeof(SingleOrDefaultAsyncInMemoryMergeEngine<>), mergeQueryCompilerContext, async, cancellationToken);
+                        return EnsureResultTypeMergeExecute<TResult>(typeof(SingleOrDefaultSkipAsyncInMemoryMergeEngine<>), mergeQueryCompilerContext, async, cancellationToken);
                     case nameof(Enumerable.Count):
                         return EnsureResultTypeMergeExecute<TResult>(typeof(CountAsyncInMemoryMergeEngine<>), mergeQueryCompilerContext, async, cancellationToken);
                     case nameof(Enumerable.LongCount):
@@ -104,7 +102,6 @@ namespace ShardingCore.Sharding.ShardingQueryExecutors
                     case nameof(Enumerable.Contains):
                         return EnsureResultTypeMergeExecute<TResult>(typeof(ContainsAsyncInMemoryMergeEngine<>), mergeQueryCompilerContext, async, cancellationToken);
                 }
-            }
 
 
             throw new ShardingCoreException($"db context operator not support query expression:[{mergeQueryCompilerContext.GetQueryExpression().ShardingPrint()}]  result type:[{typeof(TResult).FullName}]");
@@ -112,8 +109,7 @@ namespace ShardingCore.Sharding.ShardingQueryExecutors
 
         private StreamMergeContext GetStreamMergeContext(IMergeQueryCompilerContext mergeQueryCompilerContext)
         {
-            var streamMergeContextFactory = (IStreamMergeContextFactory)ShardingContainer.GetService(typeof(IStreamMergeContextFactory<>).GetGenericType0(mergeQueryCompilerContext.GetShardingDbContextType()));
-            return streamMergeContextFactory.Create(mergeQueryCompilerContext);
+            return _streamMergeContextFactory.Create(mergeQueryCompilerContext);
 
         }
         private TResult EnumerableExecute<TResult>(IMergeQueryCompilerContext mergeQueryCompilerContext)
@@ -122,8 +118,8 @@ namespace ShardingCore.Sharding.ShardingQueryExecutors
             var queryEntityType = combineQueryable.ElementType;
             var streamMergeContext = GetStreamMergeContext(mergeQueryCompilerContext);
 
-            Type streamMergeEngineType = typeof(AsyncEnumeratorStreamMergeEngine<,>);
-            streamMergeEngineType = streamMergeEngineType.MakeGenericType(mergeQueryCompilerContext.GetShardingDbContextType(), queryEntityType);
+            Type streamMergeEngineType = typeof(AsyncEnumeratorStreamMergeEngine<>);
+            streamMergeEngineType = streamMergeEngineType.MakeGenericType(queryEntityType);
             return (TResult)Activator.CreateInstance(streamMergeEngineType, streamMergeContext);
         }
 

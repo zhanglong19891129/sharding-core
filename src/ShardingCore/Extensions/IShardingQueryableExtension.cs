@@ -27,13 +27,11 @@ namespace ShardingCore.Extensions
         private static readonly MethodInfo QueryableTakeMethod = typeof(Queryable).GetMethods().First(
             m => m.Name == nameof(Queryable.Take)
                  && m.GetParameters().Length == 2 && m.GetParameters()[1].ParameterType == typeof(int));
-        internal static ExtraEntry GetExtraEntry<T>(this IQueryable<T> source)
+        
+        internal static IQueryable RemoveSkipAndTake(this IQueryable source)
         {
-            var extraVisitor = new QueryableExtraDiscoverVisitor();
-            extraVisitor.Visit(source.Expression);
-            var extraEntry = new ExtraEntry(extraVisitor.GetPaginationContext().Skip, extraVisitor.GetPaginationContext().Take, extraVisitor.GetOrderByContext().PropertyOrders,extraVisitor.GetSelectContext(),extraVisitor.GetGroupByContext());
-            extraEntry.ProcessGroupBySelectProperties();
-            return extraEntry;
+            var expression = new RemoveSkipAndTakeVisitor().Visit(source.Expression);
+            return source.Provider.CreateQuery(expression);
         }
         /// <summary>
         /// 删除Skip表达式
@@ -127,10 +125,17 @@ namespace ShardingCore.Extensions
             var newExpression = replaceQueryableVisitor.Visit(source.Expression);
             return replaceQueryableVisitor.Source.Provider.CreateQuery(newExpression);
         }
+        internal static IQueryable<TSource> ReplaceDbContextQueryableWithType<TSource>(this IQueryable<TSource> source, DbContext dbContext)
+        {
+            DbContextReplaceQueryableVisitor replaceQueryableVisitor = new DbContextReplaceQueryableVisitor(dbContext);
+            var newExpression = replaceQueryableVisitor.Visit(source.Expression);
+            return (IQueryable<TSource>)replaceQueryableVisitor.Source.Provider.CreateQuery(newExpression);
+        }
         internal static Expression ReplaceDbContextExpression(this Expression queryExpression, DbContext dbContext)
         {
             DbContextReplaceQueryableVisitor replaceQueryableVisitor = new DbContextReplaceQueryableVisitor(dbContext);
-            return replaceQueryableVisitor.Visit(queryExpression);
+            var expression = replaceQueryableVisitor.Visit(queryExpression);
+            return expression;
         }
     }
 }

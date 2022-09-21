@@ -2,6 +2,7 @@ using ShardingCore.Core.VirtualRoutes;
 using ShardingCore.VirtualRoutes.Abstractions;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Linq.Expressions;
 
 namespace ShardingCore.VirtualRoutes.Years
@@ -15,7 +16,7 @@ namespace ShardingCore.VirtualRoutes.Years
     public abstract class AbstractSimpleShardingYearKeyDateTimeVirtualTableRoute<TEntity> : AbstractShardingTimeKeyDateTimeVirtualTableRoute<TEntity> where TEntity : class
     {
         public abstract DateTime GetBeginTime();
-        public override List<string> GetAllTails()
+        protected override List<string> CalcTailsOnStart()
         {
             var beginTime = GetBeginTime().Date;
          
@@ -77,6 +78,11 @@ namespace ShardingCore.VirtualRoutes.Years
                 "0 0 0 1 1 ?",
                 "0 1 0 1 1 ?",
             };
+        }
+        public override string[] GetJobCronExpressions()
+        {
+            var crons = base.GetJobCronExpressions().Concat(new []{"0 0 0 1 1 ?"}).Distinct().ToArray();
+            return crons;
         }
     }
 }

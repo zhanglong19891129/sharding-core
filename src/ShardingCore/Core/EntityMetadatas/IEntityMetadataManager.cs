@@ -1,5 +1,7 @@
 ﻿using System;
+using System.Collections.Generic;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
 using ShardingCore.Sharding.Abstractions;
 
 namespace ShardingCore.Core.EntityMetadatas
@@ -34,12 +36,17 @@ namespace ShardingCore.Core.EntityMetadatas
         /// </summary>
         /// <param name="entityType"></param>
         /// <returns></returns>
-        EntityMetadata TryGet(Type entityType);
+        EntityMetadata? TryGet(Type entityType);
+        List<EntityMetadata> TryGetByLogicTableName(string logicTableName);
         /// <summary>
         /// 是否是分片对象(包括分表或者分库)
         /// </summary>
         /// <param name="entityType"></param>
         /// <returns></returns>
         bool IsSharding(Type entityType);
+
+        List<Type> GetAllShardingEntities();
+
+        bool TryInitModel(IEntityType efEntityType);
     }
 }

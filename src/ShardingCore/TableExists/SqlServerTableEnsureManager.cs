@@ -1,19 +1,24 @@
-﻿using Microsoft.EntityFrameworkCore;
+﻿using System;
+using Microsoft.EntityFrameworkCore;
 using ShardingCore.Sharding.Abstractions;
 using ShardingCore.TableExists.Abstractions;
 using System.Collections.Generic;
 using System.Data.Common;
+using ShardingCore.Core.VirtualRoutes.TableRoutes.RouteTails.Abstractions;
 
 namespace ShardingCore.TableExists
 {
-    public  class SqlServerTableEnsureManager<TShardingDbContext> : AbstractTableEnsureManager<TShardingDbContext> where TShardingDbContext : DbContext, IShardingDbContext
+    public  class SqlServerTableEnsureManager : AbstractTableEnsureManager
     {
+        public SqlServerTableEnsureManager(IRouteTailFactory routeTailFactory) : base(routeTailFactory)
+        {
+        }
         private const string Tables = "Tables";
         private const string TABLE_NAME = "TABLE_NAME";
 
         public override ISet<string> DoGetExistTables(DbConnection connection, string dataSourceName)
         {
-            ISet<string> result = new HashSet<string>();
+            ISet<string> result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             using (var dataTable = connection.GetSchema(Tables))
             {
                 for (int i = 0; i < dataTable.Rows.Count; i++)
@@ -23,5 +28,6 @@ namespace ShardingCore.TableExists
             }
             return result;
         }
+
     }
 }

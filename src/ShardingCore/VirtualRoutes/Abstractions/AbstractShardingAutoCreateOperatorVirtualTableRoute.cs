@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
@@ -6,45 +7,94 @@ using System.Linq.Expressions;
 using System.Text;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using ShardingCore.Core;
+using ShardingCore.Core.Collections;
 using ShardingCore.Core.EntityMetadatas;
-using ShardingCore.Core.PhysicTables;
+using ShardingCore.Core.ServiceProviders;
 using ShardingCore.Core.VirtualDatabase.VirtualDataSources;
 using ShardingCore.Core.VirtualDatabase.VirtualDataSources.Abstractions;
-using ShardingCore.Core.VirtualDatabase.VirtualTables;
-using ShardingCore.Core.VirtualRoutes;
+using ShardingCore.Core.VirtualRoutes.Abstractions;
 using ShardingCore.Core.VirtualRoutes.TableRoutes.Abstractions;
 using ShardingCore.Extensions;
 using ShardingCore.Jobs.Abstaractions;
-using ShardingCore.Logger;
+
 using ShardingCore.TableCreator;
 
 namespace ShardingCore.VirtualRoutes.Abstractions
 {
+    /// <summary>
+    /// 分片字段追加
+    /// </summary>
+    /// <typeparam name="TEntity"></typeparam>
+    /// <typeparam name="TKey"></typeparam>
     [ExcludeFromCodeCoverage]
-    public abstract class AbstractShardingAutoCreateOperatorVirtualTableRoute<TEntity, TKey> : AbstractShardingOperatorVirtualTableRoute<TEntity, TKey>, IJob where TEntity : class
+    public abstract class
+        AbstractShardingAutoCreateOperatorVirtualTableRoute<TEntity, TKey> :
+            AbstractShardingOperatorVirtualTableRoute<TEntity, TKey>, ITailAppendable, IJob where TEntity : class
     {
-        private static readonly ILogger<AbstractShardingAutoCreateOperatorVirtualTableRoute<TEntity, TKey>> _logger =
-            InternalLoggerFactory.CreateLogger<AbstractShardingAutoCreateOperatorVirtualTableRoute<TEntity, TKey>>();
+        private  readonly object APPEND_LOCK = new object();
+
+
+        private readonly SafeReadAppendList<string> _tails = new SafeReadAppendList<string>();
+
+        public override List<string> GetTails()
+        {
+            // ReSharper disable once InconsistentlySynchronizedField
+            return _tails.CopyList;
+        }
+
+        protected abstract List<string> CalcTailsOnStart();
+
+        public bool Append(string tail)
+        {
+            lock (APPEND_LOCK)
+            {
+                if (!_tails.Contains(tail))
+                {
+                    _tails.Append(tail);
+                    return true;
+                }
+
+                return false;
+            }
+        }
+
+        public override void Initialize(EntityMetadata entityMetadata, IShardingProvider shardingProvider)
+        {
+            base.Initialize(entityMetadata, shardingProvider);
+            var calcTailsOnStart = CalcTailsOnStart();
+            foreach (var tail in calcTailsOnStart)
+            {
+                Append(tail);
+            }
+        }
 
         /// <summary>
         /// 不可以设置一样
         /// </summary>
         public virtual string JobName =>
-            $"{EntityMetadata?.ShardingDbContextType?.Name}:{EntityMetadata?.EntityType?.Name}";
+            $"{GetType().Name}:{EntityMetadata?.EntityType?.Name}";
 
         /// <summary>
         /// 是否需要自动创建按时间分表的路由
         /// </summary>
         /// <returns></returns>
         public abstract bool AutoCreateTableByTime();
+
         /// <summary>
         /// 显示错误日志
         /// </summary>
         public virtual bool DoLogError => false;
+
         /// <summary>
         /// 默认会在设置时间后10分钟获取tail
         /// </summary>
         public virtual int IncrementMinutes => 10;
+
+        public virtual string[] GetJobCronExpressions()
+        {
+            return GetCronExpressions();
+        }
         /// <summary>
         /// 重写改方法后请一起重写IncrementMinutes值，比如你按月分表但是你设置cron表达式为月中的时候建表，
         /// 那么会在月中的时候 <code>DateTime.Now.AddMinutes(IncrementMinutes);</code>来获取tail会导致还是当月的所以不会建表
@@ -58,60 +108,61 @@ namespace ShardingCore.VirtualRoutes.Abstractions
         /// <param name="now"></param>
         /// <returns></returns>
         protected abstract string ConvertNowToTail(DateTime now);
+
+
         public virtual Task ExecuteAsync()
         {
-            var virtualTableManager = (IVirtualTableManager)ShardingContainer.GetService(typeof(IVirtualTableManager<>).GetGenericType0(EntityMetadata.ShardingDbContextType));
-            var virtualTable = virtualTableManager.GetVirtualTable(typeof(TEntity));
-            _logger.LogDebug($"get {typeof(TEntity).Name}'s virtualTable ");
-            if (virtualTable == null)
-            {
-                _logger.LogDebug($" {typeof(TEntity).Name}'s virtualTable  is null");
-                return Task.CompletedTask;
-            }
-            var entityMetadataManager = (IEntityMetadataManager)ShardingContainer.GetService(typeof(IEntityMetadataManager<>).GetGenericType0(EntityMetadata.ShardingDbContextType));
-            var tableCreator = (IShardingTableCreator)ShardingContainer.GetService(typeof(IShardingTableCreator<>).GetGenericType0(EntityMetadata.ShardingDbContextType));
-            var virtualDataSourceManager = (IVirtualDataSourceManager)ShardingContainer.GetService(typeof(IVirtualDataSourceManager<>).GetGenericType0(EntityMetadata.ShardingDbContextType));
-            var allVirtualDataSources = virtualDataSourceManager.GetAllVirtualDataSources();
+            var logger=RouteShardingProvider
+                .GetService<ILogger<AbstractShardingAutoCreateOperatorVirtualTableRoute<TEntity, TKey>>>();
+            logger.LogDebug($"get {typeof(TEntity).Name}'s route execute job ");
+
+            var entityMetadataManager = RouteShardingProvider.GetRequiredService<IEntityMetadataManager>();
+            var tableCreator = RouteShardingProvider.GetRequiredService<IShardingTableCreator>();
+            var virtualDataSource = RouteShardingProvider.GetRequiredService<IVirtualDataSource>();
+            var dataSourceRouteManager = RouteShardingProvider.GetRequiredService<IDataSourceRouteManager>();
             var now = DateTime.Now.AddMinutes(IncrementMinutes);
             var tail = ConvertNowToTail(now);
 //必须先执行AddPhysicTable在进行CreateTable
-            virtualTableManager.AddPhysicTable(virtualTable, new DefaultPhysicTable(virtualTable, tail));
-            foreach (var virtualDataSource in allVirtualDataSources)
+            Append(tail);
+            ISet<string> dataSources = new HashSet<string>();
+            if (entityMetadataManager.IsShardingDataSource(typeof(TEntity)))
             {
-                ISet<string> dataSources = new HashSet<string>();
-                if (entityMetadataManager.IsShardingDataSource(typeof(TEntity)))
+                var virtualDataSourceRoute = dataSourceRouteManager.GetRoute(typeof(TEntity));
+                foreach (var dataSourceName in virtualDataSourceRoute.GetAllDataSourceNames())
                 {
-                    var virtualDataSourceRoute = virtualDataSource.GetRoute(typeof(TEntity));
-                    foreach (var dataSourceName in virtualDataSourceRoute.GetAllDataSourceNames())
-                    {
-                        dataSources.Add(dataSourceName);
-                    }
+                    dataSources.Add(dataSourceName);
                 }
-                else
+            }
+            else
+            {
+                dataSources.Add(virtualDataSource.DefaultDataSourceName);
+            }
+
+            logger.LogInformation($"auto create table data source names:[{string.Join(",", dataSources)}]");
+
+            foreach (var dataSource in dataSources)
+            {
+                try
                 {
-                    dataSources.Add(virtualDataSource.DefaultDataSourceName);
+                    logger.LogInformation($"begin table tail:[{tail}],entity:[{typeof(TEntity).Name}]");
+                    tableCreator.CreateTable(dataSource, typeof(TEntity), tail);
+                    logger.LogInformation($"succeed table tail:[{tail}],entity:[{typeof(TEntity).Name}]");
                 }
-                _logger.LogInformation($"auto create table data source names:[{string.Join(",", dataSources)}]");
-                foreach (var dataSource in dataSources)
+                catch (Exception e)
                 {
-                    try
-                    {
-                        _logger.LogInformation($"begin table tail:[{tail}],entity:[{typeof(TEntity).Name}]");
-                        tableCreator.CreateTable(dataSource, typeof(TEntity), tail);
-                        _logger.LogInformation($"succeed table tail:[{tail}],entity:[{typeof(TEntity).Name}]");
-                    }
-                    catch (Exception e)
-                    {
-                        //ignore
-                        _logger.LogInformation($"warning table tail:[{tail}],entity:[{typeof(TEntity).Name}]");
-                        if (DoLogError)
-                            _logger.LogError(e, $"{dataSource} {typeof(TEntity).Name}'s create table error ");
-                    }
+                    //ignore
+                    logger.LogInformation($"warning table tail:[{tail}],entity:[{typeof(TEntity).Name}]");
+                    if (DoLogError)
+                        logger.LogError(e, $"{dataSource} {typeof(TEntity).Name}'s create table error ");
                 }
             }
 
             return Task.CompletedTask;
         }
 
+        public bool AppendJob()
+        {
+            return AutoCreateTableByTime();
+        }
     }
 }

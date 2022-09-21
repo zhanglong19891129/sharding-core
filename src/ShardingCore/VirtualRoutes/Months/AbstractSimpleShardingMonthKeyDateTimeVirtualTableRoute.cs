@@ -3,6 +3,7 @@ using ShardingCore.Helpers;
 using ShardingCore.VirtualRoutes.Abstractions;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Linq.Expressions;
 
 namespace ShardingCore.VirtualRoutes.Months
@@ -16,7 +17,7 @@ namespace ShardingCore.VirtualRoutes.Months
     public abstract class AbstractSimpleShardingMonthKeyDateTimeVirtualTableRoute<TEntity> : AbstractShardingTimeKeyDateTimeVirtualTableRoute<TEntity> where TEntity : class
     {
         public abstract DateTime GetBeginTime();
-        public override List<string> GetAllTails()
+        protected override List<string> CalcTailsOnStart()
         {
             var beginTime = ShardingCoreHelper.GetCurrentMonthFirstDay(GetBeginTime());
          
@@ -75,6 +76,11 @@ namespace ShardingCore.VirtualRoutes.Months
                 "0 0 0 1 * ?",
                 "0 1 0 1 * ?",
             };
+        }
+        public override string[] GetJobCronExpressions()
+        {
+            var crons = base.GetJobCronExpressions().Concat(new []{"0 0 0 1 * ?"}).Distinct().ToArray();
+            return crons;
         }
 
     }

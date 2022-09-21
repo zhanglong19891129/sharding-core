@@ -1,10 +1,14 @@
 using Microsoft.EntityFrameworkCore;
 using Sample.AutoCreateIfPresent;
 using ShardingCore;
-using ShardingCore.Bootstrapers;
-using ShardingCore.Core.VirtualDatabase.VirtualTables;
+using ShardingCore.Bootstrappers;
+using ShardingCore.Core.DbContextCreator;
+using ShardingCore.Core.RuntimeContexts;
 using ShardingCore.TableExists;
+using ShardingCore.TableExists.Abstractions;
 
+
+var join = string.Join(Environment.NewLine,Enumerable.Range(14,100).Select(o=>o+";"));
 ILoggerFactory efLogger = LoggerFactory.Create(builder =>
 {
     builder.AddFilter((category, level) => category == DbLoggerCategory.Database.Command.Name && level == LogLevel.Information).AddConsole();
@@ -19,18 +23,15 @@ builder.Services.AddControllers();
 // builder.Services.AddEndpointsApiExplorer();
 // builder.Services.AddSwaggerGen();
 builder.Services.AddShardingDbContext<DefaultDbContext>()
-    .AddEntityConfig(o =>
+    .UseRouteConfig(o =>
     {
-        o.ThrowIfQueryRouteNotMatch = false;
-        o.CreateShardingTableOnStart = true;
-        o.EnsureCreatedWithOutShardingTable = true;
         o.AddShardingTableRoute<OrderByHourRoute>();
         o.AddShardingTableRoute<AreaDeviceRoute>();
     })
-    .AddConfig(o =>
+    .UseConfig(o =>
     {
-        o.ConfigId = "c1";
-        o.AddDefaultDataSource("ds0", "server=127.0.0.1;port=3306;database=shardingTest;userid=root;password=L6yBtV6qNENrwBy7;");
+        o.ThrowIfQueryRouteNotMatch = false;
+        o.AddDefaultDataSource("ds0", "server=127.0.0.1;port=3306;database=shardingTest;userid=root;password=root;");
         o.UseShardingQuery((conn, b) =>
         {
             b.UseMySql(conn, new MySqlServerVersion(new Version())).UseLoggerFactory(efLogger);
@@ -39,8 +40,8 @@ builder.Services.AddShardingDbContext<DefaultDbContext>()
         {
             b.UseMySql(conn, new MySqlServerVersion(new Version())).UseLoggerFactory(efLogger);
         });
-        o.ReplaceTableEnsureManager(sp=>new MySqlTableEnsureManager<DefaultDbContext>());
-    }).EnsureConfig();
+    })
+    .ReplaceService<ITableEnsureManager,MySqlTableEnsureManager>().AddShardingCore();
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -49,12 +50,25 @@ if (app.Environment.IsDevelopment())
     // app.UseSwagger();
     // app.UseSwaggerUI();
 }
-app.Services.GetRequiredService<IShardingBootstrapper>().Start();
+app.Services.UseAutoShardingCreate();
+app.Services.UseAutoTryCompensateTable();
 
 
 
 app.UseAuthorization();
 
 app.MapControllers();
+using (var serviceScope = app.Services.CreateScope())
+{
+    var defaultDbContext = serviceScope.ServiceProvider.GetService<DefaultDbContext>();
+    
+    var orderByHour = new OrderByHour();
+    orderByHour.Id = Guid.NewGuid().ToString("n");
+    orderByHour.Name=$"Name:"+ Guid.NewGuid().ToString("n");
+    var dateTime = DateTime.Now;
+    orderByHour.CreateTime = dateTime.AddHours(new Random().Next(1, 20));
+    await defaultDbContext.AddAsync(orderByHour);
+    await defaultDbContext.SaveChangesAsync();
+}
 
 app.Run();

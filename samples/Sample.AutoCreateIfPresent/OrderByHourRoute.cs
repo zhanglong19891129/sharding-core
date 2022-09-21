@@ -1,20 +1,12 @@
 ﻿using System;
 using System.Collections.Concurrent;
-using System.Linq.Expressions;
 using MySqlConnector;
-using ShardingCore;
 using ShardingCore.Core.EntityMetadatas;
-using ShardingCore.Core.PhysicTables;
-using ShardingCore.Core.ShardingConfigurations;
-using ShardingCore.Core.ShardingConfigurations.Abstractions;
-using ShardingCore.Core.VirtualDatabase.VirtualDataSources.Abstractions;
-using ShardingCore.Core.VirtualDatabase.VirtualTables;
+using ShardingCore.Core.VirtualDatabase.VirtualDataSources;
 using ShardingCore.Core.VirtualRoutes;
+using ShardingCore.Core.VirtualRoutes.DataSourceRoutes.RouteRuleEngine;
 using ShardingCore.Core.VirtualRoutes.TableRoutes.Abstractions;
-using ShardingCore.Exceptions;
-using ShardingCore.Extensions;
 using ShardingCore.TableCreator;
-using ShardingCore.TableExists;
 
 /*
 * @Author: xjm
@@ -31,17 +23,44 @@ namespace Sample.AutoCreateIfPresent
         private const string TABLE_NAME = "TABLE_NAME";
 
         private const string CurrentTableName = nameof(OrderByHour);
-        private readonly IVirtualDataSourceManager<DefaultDbContext> _virtualDataSourceManager;
-        private readonly IVirtualTableManager<DefaultDbContext> _virtualTableManager;
-        private readonly IShardingTableCreator<DefaultDbContext> _shardingTableCreator;
-        private readonly ConcurrentDictionary<string, object?> _tails = new ConcurrentDictionary<string, object?>();
+        private readonly IVirtualDataSource _virtualDataSource;
+        private readonly IShardingTableCreator _shardingTableCreator;
+        private readonly ConcurrentDictionary<string, object?> _tails = new ConcurrentDictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
         private readonly object _lock = new object();
 
-        public OrderByHourRoute(IVirtualDataSourceManager<DefaultDbContext> virtualDataSourceManager,IVirtualTableManager<DefaultDbContext> virtualTableManager, IShardingTableCreator<DefaultDbContext> shardingTableCreator)
+        public OrderByHourRoute(IVirtualDataSource virtualDataSource, IShardingTableCreator shardingTableCreator)
         {
-            _virtualDataSourceManager = virtualDataSourceManager;
-            _virtualTableManager = virtualTableManager;
+            _virtualDataSource = virtualDataSource;
             _shardingTableCreator = shardingTableCreator;
+            InitTails();
+        }
+
+        private void InitTails()
+        {
+            
+            //启动寻找有哪些表后缀
+            using (var connection = new MySqlConnection(_virtualDataSource.DefaultConnectionString))
+            {
+                connection.Open();
+                var database = connection.Database;
+                
+                using (var dataTable = connection.GetSchema(Tables))
+                {
+                    for (int i = 0; i < dataTable.Rows.Count; i++)
+                    {
+                        var schema = dataTable.Rows[i][TABLE_SCHEMA];
+                        if (database.Equals($"{schema}", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var tableName = dataTable.Rows[i][TABLE_NAME]?.ToString()??string.Empty;
+                            if (tableName.StartsWith(CurrentTableName, StringComparison.OrdinalIgnoreCase))
+                            {
+                                //如果没有下划线那么需要CurrentTableName.Length有下划线就要CurrentTableName.Length+1
+                                _tails.TryAdd(tableName.Substring(CurrentTableName.Length+1),null);
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         public override string ShardingKeyToTail(object shardingKey)
@@ -61,31 +80,8 @@ namespace Sample.AutoCreateIfPresent
         /// 仅启动时调用
         /// </summary>
         /// <returns></returns>
-        public override List<string> GetAllTails()
+        public override List<string> GetTails()
         {
-            //启动寻找有哪些表后缀
-            using (var connection = new MySqlConnection(_virtualDataSourceManager.GetCurrentVirtualDataSource().DefaultConnectionString))
-            {
-                connection.Open();
-                var database = connection.Database;
-                
-                using (var dataTable = connection.GetSchema(Tables))
-                {
-                    for (int i = 0; i < dataTable.Rows.Count; i++)
-                    {
-                        var schema = dataTable.Rows[i][TABLE_SCHEMA];
-                        if (database.Equals($"{schema}", StringComparison.OrdinalIgnoreCase))
-                        {
-                            var tableName = dataTable.Rows[i][TABLE_NAME]?.ToString()??string.Empty;
-                            if (tableName.StartsWith(CurrentTableName, StringComparison.OrdinalIgnoreCase))
-                            {
-                                //如果没有下划线那么需要CurrentTableName.Length有下划线就要CurrentTableName.Length+1
-                                _tails.TryAdd(tableName.Substring(CurrentTableName.Length),null);
-                            }
-                        }
-                    }
-                }
-            }
             return _tails.Keys.ToList();
         }
 
@@ -123,62 +119,32 @@ namespace Sample.AutoCreateIfPresent
             }
         }
 
-        public override IPhysicTable RouteWithValue(List<IPhysicTable> allPhysicTables, object shardingKey)
+        public override TableRouteUnit RouteWithValue(DataSourceRouteResult dataSourceRouteResult, object shardingKey)
         {
             var shardingKeyToTail = ShardingKeyToTail(shardingKey);
 
-            if (!_tails.TryGetValue(shardingKeyToTail,out var _))
+            if (!_tails.TryGetValue(shardingKeyToTail, out var _))
             {
                 lock (_lock)
                 {
-                    if (!_tails.TryGetValue(shardingKeyToTail,out var _))
+                    if (!_tails.TryGetValue(shardingKeyToTail, out var _))
                     {
-                        var virtualTable = _virtualTableManager.GetVirtualTable(typeof(OrderByHour));
-//必须先执行AddPhysicTable在进行CreateTable
-                        _virtualTableManager.AddPhysicTable(virtualTable, new DefaultPhysicTable(virtualTable, shardingKeyToTail));
                         try
                         {
-                            _shardingTableCreator.CreateTable<OrderByHour>(_virtualDataSourceManager.GetCurrentVirtualDataSource().DefaultDataSourceName, shardingKeyToTail);
+                            _shardingTableCreator.CreateTable<OrderByHour>(_virtualDataSource.DefaultDataSourceName,
+                                shardingKeyToTail);
                         }
                         catch (Exception ex)
                         {
                             Console.WriteLine("尝试添加表失败" + ex);
                         }
 
-                        _tails.TryAdd(shardingKeyToTail,null);
+                        _tails.TryAdd(shardingKeyToTail, null);
                     }
                 }
             }
 
-            var needRefresh = allPhysicTables.Count != _tails.Count;
-            if (needRefresh)
-            {
-                var virtualTable = _virtualTableManager.GetVirtualTable(typeof(OrderByHour));
-                //修复可能导致迭代器遍历时添加的bug
-                var keys = _tails.Keys.ToList();
-                foreach (var tail in keys)
-                {
-                    var hashSet = allPhysicTables.Select(o=>o.Tail).ToHashSet();
-                    if (!hashSet.Contains(tail))
-                    {
-                        var tables = virtualTable.GetAllPhysicTables();
-                        var physicTable = tables.FirstOrDefault(o=>o.Tail==tail);
-                        if (physicTable!= null)
-                        {
-                            allPhysicTables.Add(physicTable);
-                        }
-                    }
-                }
-            }
-            var physicTables = allPhysicTables.Where(o => o.Tail== shardingKeyToTail).ToList();
-            if (physicTables.IsEmpty())
-            {
-                throw new ShardingCoreException($"sharding key route not match {EntityMetadata.EntityType} -> [{EntityMetadata.ShardingTableProperty.Name}] ->【{shardingKey}】 all tails ->[{string.Join(",", allPhysicTables.Select(o=>o.FullName))}]");
-            }
-
-            if (physicTables.Count > 1)
-                throw new ShardingCoreException($"more than one route match table:{string.Join(",", physicTables.Select(o => $"[{o.FullName}]"))}");
-            return physicTables[0];
+            return base.RouteWithValue(dataSourceRouteResult, shardingKey);
         }
     }
 }

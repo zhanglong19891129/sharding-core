@@ -3,6 +3,7 @@ using ShardingCore.Helpers;
 using ShardingCore.VirtualRoutes.Abstractions;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Linq.Expressions;
 
 namespace ShardingCore.VirtualRoutes.Years
@@ -24,7 +25,7 @@ namespace ShardingCore.VirtualRoutes.Years
         /// 返回这个对象在数据库里面的所有表后缀
         /// </summary>
         /// <returns></returns>
-        public override List<string> GetAllTails()
+        protected override List<string> CalcTailsOnStart()
         {
             var beginTime = GetBeginTime().Date;
          
@@ -101,6 +102,11 @@ namespace ShardingCore.VirtualRoutes.Years
                 "0 0 0 1 1 ?",
                 "0 1 0 1 1 ?",
             };
+        }
+        public override string[] GetJobCronExpressions()
+        {
+            var crons = base.GetJobCronExpressions().Concat(new []{"0 0 0 1 1 ?"}).Distinct().ToArray();
+            return crons;
         }
     }
 }

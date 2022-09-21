@@ -5,21 +5,17 @@ using Sample.SqlServer.DbContexts;
 using Sample.SqlServer.Domain.Entities;
 using ShardingCore.Core.QueryRouteManagers.Abstractions;
 using ShardingCore.Extensions;
-using ShardingCore.Extensions.ShardingPageExtensions;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Threading.Tasks;
-using ShardingCore;
-using ShardingCore.Core.VirtualDatabase.VirtualTables;
 using ShardingCore.Core.VirtualRoutes.TableRoutes;
-using ShardingCore.Core.VirtualRoutes.TableRoutes.RoutingRuleEngine;
 using ShardingCore.Extensions.ShardingQueryableExtensions;
-using ShardingCore.Sharding.Abstractions;
-using Microsoft.EntityFrameworkCore.Query.Internal;
-using ShardingCore.EFCores;
+using ShardingCore.Core;
+using ShardingCore.Core.RuntimeContexts;
+using ShardingCore.Extensions.ShardingPageExtensions;
 using ShardingCore.Sharding.ReadWriteConfigurations.Abstractions;
 
 namespace Sample.SqlServer.Controllers
@@ -36,39 +32,23 @@ namespace Sample.SqlServer.Controllers
         private readonly DefaultShardingDbContext _defaultTableDbContext;
         private readonly IShardingRouteManager _shardingRouteManager;
         private readonly IShardingReadWriteManager _readWriteManager;
+        private readonly IShardingRuntimeContext _shardingRuntimeContext;
 
-        public ValuesController(DefaultShardingDbContext defaultTableDbContext, IShardingRouteManager shardingRouteManager,IShardingReadWriteManager readWriteManager)
+        public ValuesController(DefaultShardingDbContext defaultTableDbContext, IShardingRuntimeContext shardingRuntimeContext)
         {
             _defaultTableDbContext = defaultTableDbContext;
             _ = defaultTableDbContext.Model;
-            _shardingRouteManager = shardingRouteManager;
-            _readWriteManager = readWriteManager;
+            _shardingRouteManager = shardingRuntimeContext.GetShardingRouteManager();
+            _readWriteManager = shardingRuntimeContext.GetShardingReadWriteManager();
+            _shardingRuntimeContext = shardingRuntimeContext;
         }
 
         [HttpGet]
         public async Task<IActionResult> Get2x()
         {
-            _defaultTableDbContext.ChangeTracker.HasChanges();
-            //var queryable = _defaultTableDbContext.Set<SysUserMod>().Where(o=>true);
-
-            //var tableRouteRuleEngineFactory = ShardingContainer.GetService<ITableRouteRuleEngineFactory<DefaultShardingDbContext>>();
-            //var tableRouteResults = tableRouteRuleEngineFactory.Route(queryable);
-            var virtualTableManager = ShardingContainer.GetService<IVirtualTableManager<DefaultShardingDbContext>>();
-            var virtualTable = virtualTableManager.GetVirtualTable<SysUserMod>();
-
-            var physicTable1s = virtualTable.RouteTo(new ShardingTableRouteConfig(shardingKeyValue: "123"));//获取值为123的所有分片
-
-            Expression<Func<SysUserMod, bool>> where = o => o.Id == "123";
-            var physicTable2s = virtualTable.RouteTo(new ShardingTableRouteConfig(predicate: where));//获取表达式o.Id == "123"的所有路由
-
-            var allPhysicTables = virtualTable.GetAllPhysicTables();
-
-            var virtualTableRoute = virtualTable.GetVirtualRoute();
-            var allTails = virtualTableRoute.GetAllTails();
-            Console.WriteLine("------------------Get2x------------------------");
             using (var dbContext =
                    DbContextHelper.CreateDbContextByString(
-                       "Data Source=localhost;Initial Catalog=ShardingCoreDBXA;Integrated Security=True;"))
+                       "Data Source=localhost;Initial Catalog=ShardingCoreDBXA;Integrated Security=True;",_shardingRuntimeContext))
             {
                 await dbContext.AddAsync(new SysUserMod()
                 {
@@ -95,7 +75,15 @@ namespace Sample.SqlServer.Controllers
             //          };
             //var listAsync = await sql.ToListAsync();
             //var resultx112331tt = await _defaultTableDbContext.Set<SysTest>().AsNoTracking().CountAsync();
+            var resultx112331tt11234 = await _defaultTableDbContext.Set<SysTest>().Skip(2).MaxAsync(o => o.Id);
+            var resultx112331tt1123 = await _defaultTableDbContext.Set<SysTest>().Skip(2).Take(2).ToListAsync();
+            var resultx112331tt1124 = await _defaultTableDbContext.Set<SysTest>().Take(2).Skip(2).ToListAsync();
             var resultx112331tt112 = await _defaultTableDbContext.Set<SysUserMod>().FirstOrDefaultAsync();
+            var resultx112331tt2x1 = await _defaultTableDbContext.Set<SysTest>().OrderBy(o => o.Id).LastOrDefaultAsync();
+            var resultx112331tt2x1x = await _defaultTableDbContext.Set<SysTest>().OrderBy(o => o.Id).SingleOrDefaultAsync();
+            var resultx112331tt2x = await _defaultTableDbContext.Set<SysTest>().OrderBy(o => o.Id).Skip(2).LastOrDefaultAsync();
+            Console.WriteLine("--------------");
+            var resultx112331tt2y = await _defaultTableDbContext.Set<SysTest>().OrderBy(o => o.Id).Skip(2).OrderByDescending(o => o.Id).FirstOrDefaultAsync();
 
             var resultx112331tt2 = await _defaultTableDbContext.Set<SysTest>().FirstOrDefaultAsync(o => o.Id == "2");
             var resultx112331ttaa2 = await _defaultTableDbContext.Set<SysTest>().FirstOrDefaultAsync(o => o.Id == "2");
@@ -188,7 +176,6 @@ namespace Sample.SqlServer.Controllers
            // var provider = queryable.Provider as EntityQueryProvider;
            // var compiler = provider.GetFieldValue("_queryCompiler") as ShardingQueryCompiler;
            // var shardingDbContext = compiler.GetFieldValue("_shardingDbContext") as IShardingDbContext;
-
 
             Stopwatch sp = new Stopwatch();
             sp.Start();
@@ -371,11 +358,11 @@ namespace Sample.SqlServer.Controllers
         [HttpGet]
         public async Task<IActionResult> Get5(string readNodeName)
         {
-            using (_readWriteManager.CreateScope<DefaultShardingDbContext>())
+            using (_readWriteManager.CreateScope())
             {
-                _readWriteManager.GetCurrent<DefaultShardingDbContext>().SetReadWriteSeparation(100,true);
+                _readWriteManager.GetCurrent().SetReadWriteSeparation(100,true);
 
-                _readWriteManager.GetCurrent<DefaultShardingDbContext>().AddDataSourceReadNode("A", readNodeName);
+                _readWriteManager.GetCurrent().AddDataSourceReadNode("A", readNodeName);
                 var xxxaaa = await _defaultTableDbContext.Set<SysUserSalary>().FirstOrDefaultAsync();
 
             }

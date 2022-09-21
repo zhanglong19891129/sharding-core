@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using ShardingCore.Core.EntityMetadatas;
 using ShardingCore.Core.VirtualDatabase.VirtualDataSources;
 using ShardingCore.Core.VirtualDatabase.VirtualDataSources.PhysicDataSources;
+using ShardingCore.Core.VirtualRoutes.Abstractions;
 using ShardingCore.Exceptions;
 using ShardingCore.Extensions;
 using ShardingCore.Sharding.Abstractions;
@@ -19,17 +20,20 @@ namespace ShardingCore.Core.VirtualRoutes.DataSourceRoutes.RouteRuleEngine
     * @Ver: 1.0
     * @Email: 326308290@qq.com
     */
-    public class DataSourceRouteRuleEngine<TShardingDbContext> : IDataSourceRouteRuleEngine<TShardingDbContext> where TShardingDbContext : DbContext, IShardingDbContext
+    public class DataSourceRouteRuleEngine: IDataSourceRouteRuleEngine
     {
-        private readonly IEntityMetadataManager<TShardingDbContext> _entityMetadataManager;
+        private readonly IEntityMetadataManager _entityMetadataManager;
+        private readonly IVirtualDataSource _virtualDataSource;
+        private readonly IDataSourceRouteManager _dataSourceRouteManager;
 
-        public DataSourceRouteRuleEngine(IEntityMetadataManager<TShardingDbContext> entityMetadataManager)
+        public DataSourceRouteRuleEngine(IEntityMetadataManager entityMetadataManager,IVirtualDataSource virtualDataSource,IDataSourceRouteManager dataSourceRouteManager)
         {
             _entityMetadataManager = entityMetadataManager;
+            _virtualDataSource = virtualDataSource;
+            _dataSourceRouteManager = dataSourceRouteManager;
         }
         public DataSourceRouteResult Route(DataSourceRouteRuleContext routeRuleContext)
         {
-            var virtualDataSource = routeRuleContext.VirtualDataSource;
             var dataSourceMaps = new Dictionary<Type, ISet<string>>();
 
             foreach (var queryEntityKv in routeRuleContext.QueryEntities)
@@ -37,10 +41,10 @@ namespace ShardingCore.Core.VirtualRoutes.DataSourceRoutes.RouteRuleEngine
                 var queryEntity = queryEntityKv.Key;
                 if (!_entityMetadataManager.IsShardingDataSource(queryEntity))
                 {
-                    dataSourceMaps.Add(queryEntity, new HashSet<string>() { virtualDataSource.DefaultDataSourceName });
+                    dataSourceMaps.Add(queryEntity, new HashSet<string>() { _virtualDataSource.DefaultDataSourceName });
                     continue;
                 }
-                var dataSourceConfigs = virtualDataSource.RouteTo(queryEntity, new ShardingDataSourceRouteConfig(queryEntityKv.Value??routeRuleContext.Queryable));
+                var dataSourceConfigs = _dataSourceRouteManager.RouteTo(queryEntity, new ShardingDataSourceRouteConfig(queryEntityKv.Value??routeRuleContext.Queryable));
                 if (!dataSourceMaps.ContainsKey(queryEntity))
                 {
                     dataSourceMaps.Add(queryEntity, dataSourceConfigs.ToHashSet());

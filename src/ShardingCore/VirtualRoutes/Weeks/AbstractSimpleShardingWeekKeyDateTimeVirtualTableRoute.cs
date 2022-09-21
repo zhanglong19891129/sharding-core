@@ -3,6 +3,7 @@ using ShardingCore.Helpers;
 using ShardingCore.VirtualRoutes.Abstractions;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Linq.Expressions;
 
 namespace ShardingCore.VirtualRoutes.Weeks
@@ -16,9 +17,9 @@ namespace ShardingCore.VirtualRoutes.Weeks
     public abstract class AbstractSimpleShardingWeekKeyDateTimeVirtualTableRoute<TEntity> : AbstractShardingTimeKeyDateTimeVirtualTableRoute<TEntity> where TEntity : class
     {
         public abstract DateTime GetBeginTime();
-        public override List<string> GetAllTails()
+        protected override List<string> CalcTailsOnStart()
         {
-            var beginTime = GetBeginTime().Date;
+            var beginTime = ShardingCoreHelper.GetCurrentMonday(GetBeginTime()).Date;
 
             var tails = new List<string>();
             //提前创建表
@@ -77,6 +78,11 @@ namespace ShardingCore.VirtualRoutes.Weeks
                 "0 0 0 ? * 2",
                 "0 1 0 ? * 2",
             };
+        }
+        public override string[] GetJobCronExpressions()
+        {
+            var crons = base.GetJobCronExpressions().Concat(new []{"0 0 0 ? * 2"}).Distinct().ToArray();
+            return crons;
         }
 
     }

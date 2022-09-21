@@ -9,7 +9,6 @@ using ShardingCore.Core.TrackerManagers;
 using ShardingCore.Exceptions;
 using ShardingCore.Extensions;
 using ShardingCore.Sharding.Abstractions;
-using ShardingCore.Sharding.MergeEngines.Abstractions.InMemoryMerge;
 using ShardingCore.Sharding.ShardingExecutors.Abstractions;
 using ShardingCore.Sharding.ShardingExecutors.NativeTrackQueries;
 
@@ -48,11 +47,13 @@ namespace ShardingCore.Sharding.ShardingExecutors
 
         private readonly IShardingQueryExecutor _shardingQueryExecutor;
         private readonly INativeTrackQueryExecutor _nativeTrackQueryExecutor;
+        private readonly ITrackerManager _trackerManager;
 
-        public DefaultShardingTrackQueryExecutor(IShardingQueryExecutor shardingQueryExecutor, INativeTrackQueryExecutor nativeTrackQueryExecutor)
+        public DefaultShardingTrackQueryExecutor(IShardingQueryExecutor shardingQueryExecutor, INativeTrackQueryExecutor nativeTrackQueryExecutor,ITrackerManager trackerManager)
         {
             _shardingQueryExecutor = shardingQueryExecutor;
             _nativeTrackQueryExecutor = nativeTrackQueryExecutor;
+            _trackerManager = trackerManager;
         }
         public TResult Execute<TResult>(IQueryCompilerContext queryCompilerContext)
         {
@@ -81,10 +82,8 @@ namespace ShardingCore.Sharding.ShardingExecutors
             {
 
                 var queryEntityType = queryCompilerContext.GetQueryableEntityType();
-                var trackerManager =
-                    (ITrackerManager)ShardingContainer.GetService(
-                        typeof(ITrackerManager<>).GetGenericType0(queryCompilerContext.GetShardingDbContextType()));
-                if (trackerManager.EntityUseTrack(queryEntityType))
+               
+                if (_trackerManager.EntityUseTrack(queryEntityType))
                 {
                     if (queryCompilerContext.IsEnumerableQuery())
                     {

@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
+using ShardingCore.Exceptions;
 using ShardingCore.Jobs.Abstaractions;
 using ShardingCore.Jobs.Cron;
 
@@ -13,8 +14,23 @@ namespace ShardingCore.Jobs.Impls
 * @Date: Wednesday, 06 January 2021 13:13:23
 * @Email: 326308290@qq.com
 */
-    internal class JobEntry
+    public sealed class JobEntry
     {
+        public JobEntry(IJob job)
+        {
+            JobInstance = job;
+            JobName = job.JobName;
+            JobCronExpressions = job.GetJobCronExpressions();
+            if (JobCronExpressions == null)
+            {
+                throw new ArgumentException($" {nameof(JobCronExpressions)} is null");
+            }
+
+            if (JobCronExpressions.Any(o => o is null))
+            {
+                throw new ArgumentException($"{nameof(JobCronExpressions)} has null element");
+            }
+        }
         /// <summary>
         /// 保证多线程只有一个清理操作
         /// </summary>
@@ -32,7 +48,7 @@ namespace ShardingCore.Jobs.Impls
         /// <summary>
         /// job实例
         /// </summary>
-        public IJob JobInstance { get; set; }
+        public IJob JobInstance { get; }
 
         /// <summary>
         /// 是否跳过如果正在运行
@@ -43,6 +59,10 @@ namespace ShardingCore.Jobs.Impls
         /// 下次运行时间
         /// </summary>
         public DateTime? NextUtcTime { get; set; }
+        /// <summary>
+        /// 任务的cron表达式
+        /// </summary>
+        public string[] JobCronExpressions { get; }
 
         /// <summary>
         /// 是否正在运行
@@ -69,7 +89,8 @@ namespace ShardingCore.Jobs.Impls
         /// </summary>
         public void CalcNextUtcTime()
         {
-            this.NextUtcTime= JobInstance.GetCronExpressions().Select(cron => new CronExpression(cron).GetTimeAfter(DateTime.UtcNow)).Min();
+            
+            this.NextUtcTime= JobCronExpressions.Select(cron => new CronExpression(cron).GetTimeAfter(DateTime.UtcNow)).Min();
         }
     }
 }

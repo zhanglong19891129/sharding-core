@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
 		<TargetFramework>netstandard2.1</TargetFramework>
@@ -27,12 +27,14 @@
 		<Compile Include="..\..\src\ShardingCore\**\*.cs" />
 		<Compile Remove="..\..\src\ShardingCore\obj\**" />
 		<Compile Remove="..\..\src\ShardingCore\bin\**" />
+		<Compile Update="..\..\src\ShardingCore\Sharding\Enumerators\StreamMergeAsync\ConstantElementStreamMergeAsyncEnumerator.cs">
+			<Link>Sharding\Enumerators\StreamMergeAsync\ConstantElementStreamMergeAsyncEnumerator.cs</Link>
+		</Compile>
 	</ItemGroup>
 
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="5.0.16" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="5.0.16" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="5.0.17" />
   </ItemGroup>
 
 </Project>

@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using ShardingCore;
-using ShardingCore.Bootstrapers;
+using ShardingCore.Bootstrappers;
 
 namespace Samples.AutoByDate.SqlServer
 {
@@ -15,8 +15,8 @@ namespace Samples.AutoByDate.SqlServer
     {
         public static IApplicationBuilder UseShardingCore(this IApplicationBuilder app)
         {
-            var shardingBootstrapper = app.ApplicationServices.GetRequiredService<IShardingBootstrapper>();
-            shardingBootstrapper.Start();
+            app.ApplicationServices.UseAutoShardingCreate();
+            app.ApplicationServices.UseAutoTryCompensateTable();
             return app;
         }
     }

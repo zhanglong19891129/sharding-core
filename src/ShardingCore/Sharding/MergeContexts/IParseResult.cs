@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Linq;
-using ShardingCore.Core.Internal.Visitors.Selects;
 
 namespace ShardingCore.Sharding.MergeContexts
 {
@@ -18,5 +17,7 @@ namespace ShardingCore.Sharding.MergeContexts
         SelectContext GetSelectContext();
         
         GroupByContext GetGroupByContext();
+        bool IsEmunerableQuery();
+        string QueryMethodName();
     }
 }

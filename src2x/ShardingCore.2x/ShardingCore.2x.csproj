@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
 
 	<PropertyGroup>
@@ -29,7 +29,13 @@
 		<Compile Remove="..\..\src\ShardingCore\obj\**" />
 		<Compile Remove="..\..\src\ShardingCore\bin\**" />
 		<Compile Update="..\..\src\ShardingCore\Sharding\ShardingExecutors\Abstractions\ICompileParameter.cs">
-		  <Link>Sharding\ShardingExecutors\Abstractions\ICompileParameter.cs</Link>
+			<Link>Sharding\ShardingExecutors\Abstractions\ICompileParameter.cs</Link>
+		</Compile>
+		<Compile Update="..\..\src\ShardingCore\Sharding\MergeEngines\EnumeratorStreamMergeEngines\Abstractions\AbstractStreamMergeEnumerable.cs">
+			<Link>Sharding\MergeEngines\EnumeratorStreamMergeEngines\Abstractions\AbstractStreamMergeEnumerable.cs</Link>
+		</Compile>
+		<Compile Update="..\..\src\ShardingCore\Sharding\MergeEngines\EnumeratorStreamMergeEngines\Enumerables\FirstOrDefaultStreamMergeEnumerable.cs">
+			<Link>Sharding\MergeEngines\EnumeratorStreamMergeEngines\Enumerables\FirstOrDefaultStreamMergeEnumerable.cs</Link>
 		</Compile>
 	</ItemGroup>
 
@@ -40,7 +46,7 @@
 	<ItemGroup>
 		<PackageReference Include="Microsoft.EntityFrameworkCore" Version="2.2.6" />
 		<PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="2.2.6" />
-		<PackageReference Include="System.Threading.Tasks.Extensions" Version="4.5.4" />
+		<!--		<PackageReference Include="System.Threading.Tasks.Extensions" Version="4.5.4" />-->
 	</ItemGroup>
 
 </Project>

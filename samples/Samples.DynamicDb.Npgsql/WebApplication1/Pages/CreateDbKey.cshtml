@@ -1,0 +1,21 @@
+﻿@page
+@model CreateDbKeyModel
+@{
+    ViewData["title"] = "增加分库key";
+}
+
+<form asp-page="CreateDbKey" method="post">
+    <div class="mb-3 row">
+        <label asp-for="Key" class="col-sm-2 col-form-label"></label>
+        <div class="col-sm-10">
+            <input asp-for="Key" class="form-control" placeholder="分库key，必填" required />
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="offset-sm-2">
+            <button type="submit" class="btn btn-primary">提交</button>
+            <a asp-page="DbKeyMan" class="btn btn-secondary">返回</a>
+        </div>
+    </div>
+</form>

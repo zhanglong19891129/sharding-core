@@ -2,10 +2,12 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Sample.MySql.DbContexts;
 using Sample.MySql.Domain.Entities;
-using ShardingCore.Bootstrapers;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Microsoft.EntityFrameworkCore.Internal;
+using Sample.MySql.multi;
+using ShardingCore.Bootstrappers;
 
 namespace Sample.MySql
 {
@@ -17,13 +19,6 @@ namespace Sample.MySql
     */
     public static class DIExtension
     {
-        public static IApplicationBuilder UseShardingCore(this IApplicationBuilder app)
-        {
-            var shardingBootstrapper = app.ApplicationServices.GetRequiredService<IShardingBootstrapper>();
-            shardingBootstrapper.Start();
-            return app;
-        }
-
         public static void DbSeed(this IApplicationBuilder app)
         {
             using (var scope=app.ApplicationServices.CreateScope())
@@ -39,7 +34,7 @@ namespace Sample.MySql
                         {
                             Id = id.ToString(),
                             Age = id,
-                            Name = $"name_{id}",
+                            Name = $"ds{(id%3)}",
                         });
                     }
                     var userModMonths = new List<SysUserLogByMonth>();
@@ -58,6 +53,13 @@ namespace Sample.MySql
 
                 }
             }
+            
+            // using (var scope=app.ApplicationServices.CreateScope())
+            // {
+            //   
+            //     var virtualDbContext =scope.ServiceProvider.GetService<DefaultShardingDbContext>();
+            //     var any = virtualDbContext.Set<SysUserMod>().Any();
+            // }
             //using (var scope = app.ApplicationServices.CreateScope())
             //{
             //    var dbContext = scope.ServiceProvider.GetService<DefaultShardingDbContext>();

@@ -20,6 +20,11 @@ namespace ShardingCore.Helpers
     public class ShardingCoreHelper
     {
         private ShardingCoreHelper() { }
+        /// <summary>
+        /// c#默认的字符串gethashcode只是进程内一致如果程序关闭开启后那么就会乱掉所以这边建议重写string的gethashcode或者使用shardingcore提供的
+        /// </summary>
+        /// <param name="value"></param>
+        /// <returns></returns>
         public static int GetStringHashCode(string value)
         {
             Check.NotNull(value, nameof(value));
@@ -40,7 +45,7 @@ namespace ShardingCore.Helpers
         }
         public static long ConvertDateTimeToLong(DateTime localDateTime)
         {
-            return new DateTimeOffset(localDateTime).ToUnixTimeMilliseconds(); ;
+            return new DateTimeOffset(localDateTime).ToUnixTimeMilliseconds(); 
         }
 
         /// <summary>
@@ -85,19 +90,21 @@ namespace ShardingCore.Helpers
         {
             var contextType = typeof(TContext);
             var declaredConstructors = contextType.GetTypeInfo().DeclaredConstructors.ToList();
-            if (declaredConstructors.Count != 1)
+            if (declaredConstructors.Count(o => !o.IsStatic) != 1)
             {
-                throw new ArgumentException($"dbcontext : {contextType} declared constructor count more {contextType}");
-            }
-            if (declaredConstructors[0].GetParameters().Length != 1)
-            {
-                throw new ArgumentException($"dbcontext : {contextType} declared constructor parameters more ");
+                throw new ArgumentException($"dbcontext : {contextType} declared constructor count more {contextType},if u want support multi constructor params plz replace ${nameof(IDbContextCreator)} interface");
             }
 
-            var paramType = declaredConstructors[0].GetParameters()[0].ParameterType;
+            var defaultDeclaredConstructor = declaredConstructors.First(o=>!o.IsStatic);
+            if (defaultDeclaredConstructor.GetParameters().Length != 1)
+            {
+                throw new ArgumentException($"dbcontext : {contextType} declared constructor parameters more ,if u want support multi constructor params plz replace ${nameof(IDbContextCreator)} interface");
+            }
+
+            var paramType = defaultDeclaredConstructor.GetParameters()[0].ParameterType;
             if (paramType != typeof(ShardingDbContextOptions) && paramType != typeof(DbContextOptions) && paramType != typeof(DbContextOptions<TContext>))
             {
-                throw new ArgumentException($"dbcontext : {contextType} declared constructor parameters should use {typeof(ShardingDbContextOptions)} or {typeof(DbContextOptions)} or {typeof(DbContextOptions<TContext>)} ");
+                throw new ArgumentException($"dbcontext : {contextType} declared constructor parameters should use {typeof(ShardingDbContextOptions)} or {typeof(DbContextOptions)} or {typeof(DbContextOptions<TContext>)},if u want support multi constructor params plz replace ${nameof(IDbContextCreator)} interface ");
             }
 
             //if (!contextType.IsShardingDbContext())

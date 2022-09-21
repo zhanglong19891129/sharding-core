@@ -10,7 +10,10 @@ using ShardingCore.Extensions;
 using ShardingCore.Sharding.Abstractions;
 using System;
 using System.Threading;
-using ShardingCore.Logger;
+using ShardingCore.Core.DbContextCreator;
+using ShardingCore.Core.ServiceProviders;
+using ShardingCore.Core.ShardingConfigurations;
+using ShardingCore.Sharding;
 
 namespace ShardingCore.TableCreator
 {
@@ -20,22 +23,27 @@ namespace ShardingCore.TableCreator
     * @Date: Monday, 21 December 2020 11:23:22
     * @Email: 326308290@qq.com
     */
-    public class ShardingTableCreator<TShardingDbContext> : IShardingTableCreator<TShardingDbContext> where TShardingDbContext : DbContext, IShardingDbContext
+    public class ShardingTableCreator : IShardingTableCreator
     {
-        private static readonly ILogger<ShardingTableCreator<TShardingDbContext>> _logger =
-            InternalLoggerFactory.CreateLogger<ShardingTableCreator<TShardingDbContext>>();
-        private readonly IServiceProvider _serviceProvider;
-        private readonly IShardingEntityConfigOptions<TShardingDbContext> _entityConfigOptions;
-        private readonly IRouteTailFactory _routeTailFactory;
+        private  readonly ILogger<ShardingTableCreator> _logger;
 
-        public ShardingTableCreator(IServiceProvider serviceProvider, IShardingEntityConfigOptions<TShardingDbContext> entityConfigOptions, IRouteTailFactory routeTailFactory)
+        private readonly IShardingProvider _shardingProvider;
+        private readonly ShardingConfigOptions _shardingConfigOptions;
+        private readonly IRouteTailFactory _routeTailFactory;
+        private readonly IDbContextCreator _dbContextCreator;
+
+        public ShardingTableCreator(IShardingProvider shardingProvider,ShardingConfigOptions shardingConfigOptions, IRouteTailFactory routeTailFactory,IDbContextCreator dbContextCreator,
+            ILogger<ShardingTableCreator> logger)
         {
-            _serviceProvider = serviceProvider;
-            _entityConfigOptions = entityConfigOptions;
+            _shardingProvider = shardingProvider;
+            _shardingConfigOptions = shardingConfigOptions;
             _routeTailFactory = routeTailFactory;
+            _dbContextCreator = dbContextCreator;
+            _logger = logger;
         }
 
-        public void CreateTable<T>(string dataSourceName, string tail) where T : class
+        public void CreateTable<T>(string dataSourceName, string tail)
+            where T : class
         {
             CreateTable(dataSourceName, typeof(T), tail);
         }
@@ -46,28 +54,31 @@ namespace ShardingCore.TableCreator
         /// <param name="dataSourceName"></param>
         /// <param name="shardingEntityType"></param>
         /// <param name="tail"></param>
-        public void CreateTable(string dataSourceName, Type shardingEntityType, string tail)
+        public void CreateTable(string dataSourceName, Type shardingEntityType,
+            string tail)
         {
-            using (var serviceScope = _serviceProvider.CreateScope())
+            using (var scope = _shardingProvider.CreateScope())
             {
-                var dbContext = serviceScope.ServiceProvider.GetService<TShardingDbContext>();
-                var shardingDbContext = (IShardingDbContext)dbContext;
-                using (var context = shardingDbContext.GetDbContext(dataSourceName, false,
-                           _routeTailFactory.Create(tail, false)))
+                
+                using (var shellDbContext = _dbContextCreator.GetShellDbContext(scope.ServiceProvider))
                 {
-                    context.RemoveDbContextRelationModelSaveOnlyThatIsNamedType(shardingEntityType);
-                    var databaseCreator = context.Database.GetService<IDatabaseCreator>() as RelationalDatabaseCreator;
-                    try
+                    using (var context = ((IShardingDbContext)shellDbContext).GetIndependentWriteDbContext(dataSourceName,
+                               _routeTailFactory.Create(tail, false)))
                     {
-                        databaseCreator.CreateTables();
-                    }
-                    catch (Exception ex)
-                    {
-                        if (!_entityConfigOptions.IgnoreCreateTableError.GetValueOrDefault())
+                        context.RemoveDbContextRelationModelSaveOnlyThatIsNamedType(shardingEntityType);
+                        var databaseCreator = context.Database.GetService<IDatabaseCreator>() as RelationalDatabaseCreator;
+                        try
                         {
-                            _logger.LogWarning(ex,
-                                $"create table error entity name:[{shardingEntityType.Name}].");
-                            throw new ShardingCoreException($" create table error :{ex.Message}", ex);
+                            databaseCreator.CreateTables();
+                        }
+                        catch (Exception ex)
+                        {
+                            if (!_shardingConfigOptions.IgnoreCreateTableError.GetValueOrDefault())
+                            {
+                                _logger.LogWarning(ex,
+                                    $"create table error entity name:[{shardingEntityType.Name}].");
+                                throw new ShardingCoreException($" create table error :{ex.Message}", ex);
+                            }
                         }
                     }
                 }

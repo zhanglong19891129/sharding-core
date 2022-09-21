@@ -10,6 +10,9 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
+using ShardingCore.Core;
+using ShardingCore.Core.RuntimeContexts;
 
 
 namespace ShardingCore.EFCores
@@ -17,16 +20,16 @@ namespace ShardingCore.EFCores
     /// <summary>
     /// 当前查询编译拦截
     /// </summary>
-    public class ShardingQueryCompiler : IQueryCompiler
+    public class ShardingQueryCompiler : IQueryCompiler,IShardingDbContextAvailable
     {
         private readonly IShardingDbContext _shardingDbContext;
         private readonly IShardingCompilerExecutor _shardingCompilerExecutor;
 
-        public ShardingQueryCompiler(ICurrentDbContext currentContext)
+        public ShardingQueryCompiler(ICurrentDbContext currentContext,IShardingRuntimeContext shardingRuntimeContext)
         {
             _shardingDbContext = currentContext.Context as IShardingDbContext ??
                                  throw new ShardingCoreException("db context operator is not IShardingDbContext");
-            _shardingCompilerExecutor = ShardingContainer.GetService<IShardingCompilerExecutor>();
+            _shardingCompilerExecutor = shardingRuntimeContext.GetShardingCompilerExecutor();
         }
 
         public TResult Execute<TResult>(Expression query)
@@ -85,5 +88,9 @@ namespace ShardingCore.EFCores
             throw new NotImplementedException();
         }
 #endif
+        public IShardingDbContext GetShardingDbContext()
+        {
+            return _shardingDbContext;
+        }
     }
 }

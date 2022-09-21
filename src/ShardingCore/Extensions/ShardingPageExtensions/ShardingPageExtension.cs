@@ -2,7 +2,10 @@
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
-using ShardingCore.Core.ShardingPage.Abstractions;
+using Microsoft.EntityFrameworkCore.Query.Internal;
+using ShardingCore.EFCores;
+using ShardingCore.Exceptions;
+using ShardingCore.Sharding.Abstractions;
 
 namespace ShardingCore.Extensions.ShardingPageExtensions
 {
@@ -15,15 +18,41 @@ namespace ShardingCore.Extensions.ShardingPageExtensions
     */
     public static class ShardingPageExtension
     {
+        private static IShardingDbContext GetShardingDbContext<T>(IQueryable<T> source)
+        {
+            
+            var entityQueryProvider = source.Provider as EntityQueryProvider??throw new ShardingCoreInvalidOperationException($"cant use sharding page that {nameof(IQueryable)} provider not {nameof(EntityQueryProvider)}");
+
+            var shardingQueryCompiler = entityQueryProvider.GetFieldValue("_queryCompiler") as ShardingQueryCompiler??throw new ShardingCoreInvalidOperationException($"cant use sharding page that {nameof(EntityQueryProvider)} not contains {nameof(ShardingQueryCompiler)} filed named _queryCompiler");
+            var dbContextAvailable = shardingQueryCompiler as IShardingDbContextAvailable;
+            if (dbContextAvailable == null)
+            {
+                throw new ShardingCoreInvalidOperationException($"cant use sharding page that {nameof(ShardingQueryCompiler)} not impl  {nameof(IShardingDbContextAvailable)}");
+            }
+
+            return dbContextAvailable.GetShardingDbContext();
+        }
+        /// <summary>
+        /// 配置了分页configuration
+        /// count+list的分页list会根据count进行优化
+        /// </summary>
+        /// <param name="source"></param>
+        /// <param name="pageIndex"></param>
+        /// <param name="pageSize"></param>
+        /// <typeparam name="T"></typeparam>
+        /// <returns></returns>
         public static async Task<ShardingPagedResult<T>> ToShardingPageAsync<T>(this IQueryable<T> source, int pageIndex, int pageSize)
         {
+            var shardingDbContext = GetShardingDbContext(source);
+            var shardingRuntimeContext = ((DbContext)shardingDbContext).GetShardingRuntimeContext();
+            
             //设置每次获取多少页
             var take = pageSize <= 0 ? 1 : pageSize;
             //设置当前页码最小1
             var index = pageIndex <= 0 ? 1 : pageIndex;
             //需要跳过多少页
             var skip = (index - 1) * take;
-            var shardingPageManager = ShardingContainer.GetService<IShardingPageManager>();
+            var shardingPageManager = shardingRuntimeContext.GetShardingPageManager();
             using (shardingPageManager.CreateScope())
             {
                 //获取每次总记录数
@@ -38,8 +67,19 @@ namespace ShardingCore.Extensions.ShardingPageExtensions
                 return new ShardingPagedResult<T>(data, count);
             }
         }
+        /// <summary>
+        /// 配置了分页configuration
+        /// count+list的分页list会根据count进行优化
+        /// </summary>
+        /// <param name="source"></param>
+        /// <param name="pageIndex"></param>
+        /// <param name="pageSize"></param>
+        /// <typeparam name="T"></typeparam>
+        /// <returns></returns>
         public static ShardingPagedResult<T> ToShardingPage<T>(this IQueryable<T> source, int pageIndex, int pageSize)
         {
+            var shardingDbContext = GetShardingDbContext(source);
+            var shardingRuntimeContext = ((DbContext)shardingDbContext).GetShardingRuntimeContext();
             //设置每次获取多少页
             var take = pageSize <= 0 ? 1 : pageSize;
             //设置当前页码最小1
@@ -47,7 +87,7 @@ namespace ShardingCore.Extensions.ShardingPageExtensions
             //需要跳过多少页
             var skip = (index - 1) * take;
 
-            var shardingPageManager = ShardingContainer.GetService<IShardingPageManager>();
+            var shardingPageManager = shardingRuntimeContext.GetShardingPageManager();
             using (shardingPageManager.CreateScope())
             {
                 //获取每次总记录数

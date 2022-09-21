@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
@@ -8,12 +7,11 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using ShardingCore.Core.EntityMetadatas;
 using ShardingCore.Core.QueryRouteManagers.Abstractions;
+using ShardingCore.Core.RuntimeContexts;
 using ShardingCore.Core.VirtualDatabase.VirtualDataSources;
-using ShardingCore.Core.VirtualDatabase.VirtualDataSources.Abstractions;
 using ShardingCore.Core.VirtualDatabase.VirtualDataSources.PhysicDataSources;
-using ShardingCore.Core.VirtualDatabase.VirtualTables;
-using ShardingCore.Core.VirtualRoutes.TableRoutes;
-using ShardingCore.Core.VirtualRoutes.TableRoutes.Abstractions;
+using ShardingCore.Core.VirtualRoutes.Abstractions;
+using ShardingCore.Core.VirtualRoutes.DataSourceRoutes.RouteRuleEngine;
 using ShardingCore.Core.VirtualRoutes.TableRoutes.RouteTails;
 using ShardingCore.Core.VirtualRoutes.TableRoutes.RouteTails.Abstractions;
 using ShardingCore.Core.VirtualRoutes.TableRoutes.RoutingRuleEngine;
@@ -36,50 +34,41 @@ using Xunit;
 
 namespace ShardingCore.Test
 {
-    /*
-    * @Author: xjm
-    * @Description:
-    * @Date: Friday, 15 January 2021 17:22:10
-    * @Email: 326308290@qq.com
-    */
+
     public class ShardingTest
     {
         private readonly ShardingDefaultDbContext _virtualDbContext;
         private readonly IShardingRouteManager _shardingRouteManager;
-        private readonly ActualConnectionStringManager<ShardingDefaultDbContext> _connectionStringManager;
+        private readonly ActualConnectionStringManager _connectionStringManager;
         private readonly IConfiguration _configuration;
-        private readonly IEntityMetadataManager<ShardingDefaultDbContext> _entityMetadataManager;
-        private readonly IVirtualDataSource<ShardingDefaultDbContext> _virtualDataSource;
-        private readonly IVirtualTableManager<ShardingDefaultDbContext> _virtualTableManager;
-        private readonly IShardingTableCreator<ShardingDefaultDbContext> _shardingTableCreator;
+        private readonly IEntityMetadataManager _entityMetadataManager;
+        private readonly IVirtualDataSource _virtualDataSource;
+        private readonly ITableRouteManager _tableRouteManager;
+        private readonly IShardingTableCreator _shardingTableCreator;
         private readonly IShardingReadWriteManager _shardingReadWriteManager;
         private readonly IRouteTailFactory _routeTailFactory;
         private readonly IReadWriteConnectorFactory _readWriteConnectorFactory;
-        private readonly ITableRouteRuleEngineFactory<ShardingDefaultDbContext> _tableRouteRuleEngineFactory;
         private readonly IShardingConnectionStringResolver _shardingConnectionStringResolver;
+        private readonly ITableRouteRuleEngineFactory _tableRouteRuleEngineFactory;
+        private readonly IShardingComparer _shardingComparer;
 
-        public ShardingTest(ShardingDefaultDbContext virtualDbContext, IShardingRouteManager shardingRouteManager, IConfiguration configuration,
-            IEntityMetadataManager<ShardingDefaultDbContext> entityMetadataManager,
-            IVirtualDataSourceManager<ShardingDefaultDbContext> virtualDataSourceManager,
-            IVirtualTableManager<ShardingDefaultDbContext> virtualTableManager,
-            IShardingTableCreator<ShardingDefaultDbContext> shardingTableCreator,
-            IShardingReadWriteManager shardingReadWriteManager, IRouteTailFactory routeTailFactory,
-            IReadWriteConnectorFactory readWriteConnectorFactory, ITableRouteRuleEngineFactory<ShardingDefaultDbContext> tableRouteRuleEngineFactory)
+        public ShardingTest(ShardingDefaultDbContext virtualDbContext, IShardingRuntimeContext shardingRuntimeContext, IConfiguration configuration)
         {
             _virtualDbContext = virtualDbContext;
-            _shardingRouteManager = shardingRouteManager;
-            _virtualDataSource = virtualDataSourceManager.GetCurrentVirtualDataSource();
-            _connectionStringManager = new ActualConnectionStringManager<ShardingDefaultDbContext>(_virtualDataSource);
+            _shardingRouteManager = shardingRuntimeContext.GetShardingRouteManager();
+            _shardingReadWriteManager = shardingRuntimeContext.GetShardingReadWriteManager();
+            _virtualDataSource = shardingRuntimeContext.GetVirtualDataSource();
+            _connectionStringManager = new ActualConnectionStringManager(_shardingReadWriteManager, _virtualDataSource);
             _configuration = configuration;
-            this._entityMetadataManager = entityMetadataManager;
-            _virtualTableManager = virtualTableManager;
-            _shardingTableCreator = shardingTableCreator;
-            _shardingReadWriteManager = shardingReadWriteManager;
-            _routeTailFactory = routeTailFactory;
-            _readWriteConnectorFactory = readWriteConnectorFactory;
-            _tableRouteRuleEngineFactory = tableRouteRuleEngineFactory;
-            var readWriteConnectors = _virtualDataSource.ConfigurationParams.ReadWriteNodeSeparationConfigs.Select(o => readWriteConnectorFactory.CreateConnector(_virtualDataSource.ConfigurationParams.ReadStrategy.GetValueOrDefault(), o.Key, o.Value));
-            _shardingConnectionStringResolver = new ReadWriteShardingConnectionStringResolver(readWriteConnectors, _virtualDataSource.ConfigurationParams.ReadStrategy.GetValueOrDefault());
+            _entityMetadataManager = shardingRuntimeContext.GetEntityMetadataManager();
+            _tableRouteManager = shardingRuntimeContext.GetTableRouteManager();
+            _shardingTableCreator = shardingRuntimeContext.GetShardingTableCreator();
+            _routeTailFactory = shardingRuntimeContext.GetRouteTailFactory();
+            _shardingComparer = shardingRuntimeContext.GetShardingComparer();
+            _readWriteConnectorFactory = shardingRuntimeContext.GetReadWriteConnectorFactory();
+            _tableRouteRuleEngineFactory = shardingRuntimeContext.GetService<ITableRouteRuleEngineFactory>();
+            var readWriteConnectors = _virtualDataSource.ConfigurationParams.ReadWriteNodeSeparationConfigs.Select(o => _readWriteConnectorFactory.CreateConnector(_virtualDataSource.ConfigurationParams.ReadStrategy.GetValueOrDefault(), o.Key, o.Value));
+            _shardingConnectionStringResolver = new ReadWriteShardingConnectionStringResolver(readWriteConnectors, _virtualDataSource.ConfigurationParams.ReadStrategy.GetValueOrDefault(), _readWriteConnectorFactory);
         }
         // [Fact]
         // public void RouteParseCompileCacheTest()
@@ -129,8 +118,8 @@ namespace ShardingCore.Test
             var a = new DefaultPhysicDataSource("aaa", "aaa", true);
             var b = new DefaultPhysicDataSource("aaa", "aaa1", false);
             Assert.Equal(a, b);
-            var x = new EntityMetadata(typeof(LogDay), "aa", typeof(ShardingDefaultDbContext), new List<PropertyInfo>(), null);
-            var y = new EntityMetadata(typeof(LogDay), "aa1", typeof(ShardingDefaultDbContext), new List<PropertyInfo>(), null);
+            var x = new EntityMetadata(typeof(LogDay));
+            var y = new EntityMetadata(typeof(LogDay));
             Assert.Equal(x, y);
             var dateTime = new DateTime(2021, 1, 1);
             var logDays = Enumerable.Range(0, 100).Select(o => new LogDay() { Id = Guid.NewGuid(), LogLevel = "info", LogBody = o.ToString(), LogTime = dateTime.AddDays(o) }).ToList();
@@ -204,8 +193,6 @@ namespace ShardingCore.Test
             Assert.True(shardingDbContext);
             var shardingTableDbContext = _virtualDbContext.GetType().IsShardingTableDbContext();
             Assert.True(shardingTableDbContext);
-            var virtualTable = _virtualTableManager.GetVirtualTable<SysUserMod>();
-            Assert.NotNull(virtualTable);
             var emptyTailIdentity = new SingleQueryRouteTail(string.Empty).GetRouteTailIdentity();
             var aTailIdentity = new SingleQueryRouteTail("a").GetRouteTailIdentity();
             var bTailIdentity = new SingleQueryRouteTail("b").GetRouteTailIdentity();
@@ -228,7 +215,7 @@ namespace ShardingCore.Test
                 {  new ParallelTableComparerType(typeof(SysUserSalary)),new ParallelTableComparerType(typeof(SysUserMod)), });
             Assert.Equal(x1x1, x2x2);
             Assert.Equal(x1x1.GetHashCode(), x2x2.GetHashCode());
-            var succeedAddConnectionString = _shardingConnectionStringResolver.AddConnectionString("X", "Data Source=localhost;Initial Catalog=ShardingCoreDBC;Integrated Security=True;",null);
+            var succeedAddConnectionString = _shardingConnectionStringResolver.AddConnectionString("X", "Data Source=localhost;Initial Catalog=ShardingCoreDBC;Integrated Security=True;", null);
             Assert.True(succeedAddConnectionString);
             var connectionString = _shardingConnectionStringResolver.GetConnectionString("X", null);
             Assert.Equal("Data Source=localhost;Initial Catalog=ShardingCoreDBC;Integrated Security=True;", connectionString);
@@ -287,7 +274,7 @@ namespace ShardingCore.Test
             var compare0 = x.CompareTo(y);
             Assert.True(compare0 > 0);
             //asc x<y db compare  uniqueidentifier
-            var compare1 = _virtualDataSource.ConfigurationParams.ShardingComparer.Compare(x, y, true);
+            var compare1 = _shardingComparer.Compare(x, y, true);
             Assert.True(compare1 < 0);
         }
         [Fact]
@@ -378,6 +365,8 @@ namespace ShardingCore.Test
                 Assert.Equal(pageDescAge, sysUserMod.Age);
                 pageDescAge--;
             }
+            var skip10First = await _virtualDbContext.Set<SysUserMod>().Skip(10).OrderByDescending(o => o.Age).FirstOrDefaultAsync();
+            Assert.Equal(skip10First, pageResult[0]);
         }
 
         [Fact]
@@ -539,9 +528,9 @@ namespace ShardingCore.Test
         [Fact]
         public async Task ToList_Id_Eq_Not_In_Db_Test()
         {
-            var mod1s = await _virtualDbContext.Set<SysUserMod>().Where(o =>string.Compare(((IId)o).Id,"1001") ==0).ToListAsync();
+            var mod1s = await _virtualDbContext.Set<SysUserMod>().Where(o => string.Compare(((IId)o).Id, "1001") == 0).ToListAsync();
             var mod2s = await _virtualDbContext.Set<SysUserMod>().Where(o => string.Compare("1001", o.Id) == 0).ToListAsync();
-            var mod3s = await _virtualDbContext.Set<SysUserMod>().Where(o => "1001".CompareTo(o.Id)==0).ToListAsync();
+            var mod3s = await _virtualDbContext.Set<SysUserMod>().Where(o => "1001".CompareTo(o.Id) == 0).ToListAsync();
             var mod4s = await _virtualDbContext.Set<SysUserMod>().Where(o => o.Id.CompareTo("1001") == 0).ToListAsync();
             var mods = await _virtualDbContext.Set<SysUserMod>().Where(o => o.Id == "1001").ToListAsync();
             Assert.Empty(mods);
@@ -618,9 +607,9 @@ namespace ShardingCore.Test
             Assert.Equal("2", sysUserMod.Id);
             var sysUserMod2 = await _virtualDbContext.Set<SysUserMod>().Where(o => o.Name == "name_2").Select(o => new
             {
-                Name=o.Name
+                Name = o.Name
             }).FirstOrDefaultAsync();
-            var sysUserMod1 = await _virtualDbContext.Set<SysUserMod>().Where(o => o.Name == "name_2").Select(o => new TestClass(o.Name,""){Id = o.Id}).FirstOrDefaultAsync();
+            var sysUserMod1 = await _virtualDbContext.Set<SysUserMod>().Where(o => o.Name == "name_2").Select(o => new TestClass(o.Name, "") { Id = o.Id }).FirstOrDefaultAsync();
             Assert.NotNull(sysUserMod1);
 
         }
@@ -630,7 +619,7 @@ namespace ShardingCore.Test
             public string Aa { get; }
             public string Id { get; set; }
 
-            public TestClass(string name,string aa)
+            public TestClass(string name, string aa)
             {
                 Name = name;
                 Aa = aa;
@@ -776,7 +765,7 @@ namespace ShardingCore.Test
                       select new
                       {
                           UI = g.Key,
-                          x=g.Sum(o=>o.SalaryDecimal),
+                          x = g.Sum(o => o.SalaryDecimal),
                           Now = dateTime
                       };
             var listAsync = await sql.ToListAsync();
@@ -805,47 +794,6 @@ namespace ShardingCore.Test
             Assert.Equal(1120000, group[0].MinSalary);
             Assert.Equal(1140000, group[0].MaxSalary);
         }
-        //[Fact]
-        //public async Task Group_Recently_Test()
-        //{
-        //    //var list =(from us in _virtualDbContext.Set<SysUserSalary>().Where(o => ids.Contains(o.UserId))
-        //    //          group us by new
-        //    //              {
-        //    //                  UserId=us.UserId
-        //    //              }
-        //    //              into g
-        //    //          select new
-        //    //              {
-        //    //                  UserId=g.Key.UserId,
-        //    //              DateOfMonth = g.Max(o=>o.DateOfMonth)
-        //    //              }).ToList();
-        //    //var y = list;
-
-        //    var ids = new List<string>(){ "200", "300" };
-        //    List<SysUserSalary> result = new List<SysUserSalary>(ids.Count);
-        //    var routeFilter = new List<SysUserSalary>().AsQueryable().Where(o => ids.Contains(o.UserId));
-        //    //��ȡ��·��ʱ�䵹��
-        //    var tableRouteResults = _tableRouteRuleEngineFactory.Route(routeFilter)
-        //        .Select(o => o.ReplaceTables.First().Tail).OrderByDescending(o => o).ToList();
-        //    foreach (var tableRouteResult in tableRouteResults)
-        //    {
-        //        if(ids.IsEmpty())
-        //            break;
-        //        using (_shardingRouteManager.CreateScope())
-        //        {
-        //            _shardingRouteManager.Current.TryCreateOrAddMustTail<SysUserSalary>(tableRouteResult);
-        //            var queryable = _virtualDbContext.Set<SysUserSalary>().Where(o => ids.Contains(o.UserId))
-        //                .GroupBy(o => new { o.UserId }, i => i,
-        //                    (i, u) => new {
-        //                        Data = u.OrderByDescending(o => o.DateOfMonth).FirstOrDefault()
-        //                    });
-        //            var r =await queryable.ToListAsync();
-        //            result.AddRange(r.Select(o=>o.Data));
-        //            var removeUserIds = result.Select(u => u.UserId).ToHashSet();
-        //            ids.RemoveAll(o => removeUserIds.Contains(o));
-        //        }
-        //    }
-        //}
 
         [Fact]
         public async Task OrderCountTest()
@@ -938,17 +886,11 @@ namespace ShardingCore.Test
         [Fact]
         public void LogDayTableSeparatorTest()
         {
-            var virtualTable = _virtualTableManager.GetVirtualTable(typeof(LogDay));
-            var virtualTableName = virtualTable.GetVirtualTableName();
+            var tableRoute = _tableRouteManager.GetRoute(typeof(LogDay));
+            var virtualTableName = tableRoute.EntityMetadata.LogicTableName;
             Assert.Equal(nameof(LogDay), virtualTableName);
-            var table = _virtualTableManager.GetVirtualTable(virtualTableName);
-            var tryGetVirtualTable = _virtualTableManager.TryGetVirtualTable(typeof(LogDay));
-            Assert.NotNull(tryGetVirtualTable);
-            var tryGetVirtualTable1 = _virtualTableManager.TryGetVirtualTable(virtualTableName);
-            Assert.NotNull(tryGetVirtualTable1);
 
-            var all = virtualTable.GetAllPhysicTables().All(o => string.IsNullOrWhiteSpace(o.TableSeparator));
-            Assert.True(all);
+            Assert.True(string.IsNullOrWhiteSpace(tableRoute.EntityMetadata.TableSeparator));
             var entityMetadata = _entityMetadataManager.TryGet<LogDay>();
             Assert.NotNull(entityMetadata);
             var isShardingTable = entityMetadata.IsShardingTable();
@@ -982,7 +924,7 @@ namespace ShardingCore.Test
             var fourBegin = new DateTime(2021, 4, 1).Date;
             var fiveBegin = new DateTime(2021, 5, 1).Date;
             var moneyAverage = await _virtualDbContext.Set<Order>()
-                .Where(o => o.CreateTime >= fourBegin&& o.CreateTime <= fiveBegin).Select(o => o.Money).AverageAsync();
+                .Where(o => o.CreateTime >= fourBegin && o.CreateTime <= fiveBegin).Select(o => o.Money).AverageAsync();
             Assert.Equal(105, moneyAverage);
 
             using (_shardingRouteManager.CreateScope())
@@ -1148,6 +1090,22 @@ namespace ShardingCore.Test
             var x = await _virtualDbContext.Set<Order>().OrderBy(o => o.Money).LastOrDefaultAsync();
             Assert.NotNull(x);
             Assert.Equal(319, x.Money);
+
+            var x2 = await _virtualDbContext.Set<Order>().Skip(10).OrderBy(o => o.Money).LastOrDefaultAsync();
+            Assert.NotNull(x2);
+            Assert.Equal(319, x2.Money);
+
+            var x3 = await _virtualDbContext.Set<Order>().Skip(9999999).OrderBy(o => o.Money).LastOrDefaultAsync();
+            Assert.Null(x3);
+            try
+            {
+                var x4 = await _virtualDbContext.Set<Order>().Skip(9999999).OrderBy(o => o.Money).LastAsync();
+            }
+            catch (Exception e)
+            {
+                Assert.True($"{e}".Contains("Sequence contains no elements."));
+            }
+
             var x1 = await _virtualDbContext.Set<Order>().OrderBy(o => o.Money).LastAsync();
             Assert.Equal(x, x1);
             var y = await _virtualDbContext.Set<Order>().OrderBy(o => o.Money).FirstOrDefaultAsync();
@@ -1184,9 +1142,9 @@ namespace ShardingCore.Test
             }
 
             _virtualDbContext.ReadWriteSeparationWriteOnly();
-            using (_shardingReadWriteManager.CreateScope<ShardingDefaultDbContext>())
+            using (_shardingReadWriteManager.CreateScope())
             {
-                _shardingReadWriteManager.GetCurrent<ShardingDefaultDbContext>().SetReadWriteSeparation(100, true);
+                _shardingReadWriteManager.GetCurrent().SetReadWriteSeparation(100, true);
                 using (_shardingRouteManager.CreateScope())
                 {
                     _shardingRouteManager.Current.TryCreateOrAddMustDataSource<Order>("A");
@@ -1194,9 +1152,9 @@ namespace ShardingCore.Test
                     Assert.NotNull(areaB);
                 }
             }
-            using (_shardingReadWriteManager.CreateScope<ShardingDefaultDbContext>())
+            using (_shardingReadWriteManager.CreateScope())
             {
-                _shardingReadWriteManager.GetCurrent<ShardingDefaultDbContext>().SetReadWriteSeparation(100, true);
+                _shardingReadWriteManager.GetCurrent().SetReadWriteSeparation(100, true);
                 _virtualDbContext.ReadWriteSeparationWriteOnly();
                 using (_shardingRouteManager.CreateScope())
                 {
@@ -1698,35 +1656,136 @@ namespace ShardingCore.Test
         [Fact]
         public async Task QueryInner_Test()
         {
-            var sysUserMods = _virtualDbContext.Set<SysUserMod>().Select(o=>o);
-            var sysUserModInts = await _virtualDbContext.Set<SysUserModInt>().Where(o=>sysUserMods.Select(i=>i.Age).Any(i=>i==o.Age)).ToListAsync();
+            var sysUserMods = _virtualDbContext.Set<SysUserMod>().Select(o => o);
+            var sysUserModInts = await _virtualDbContext.Set<SysUserModInt>().Where(o => sysUserMods.Select(i => i.Age).Any(i => i == o.Age)).ToListAsync();
             Assert.Equal(1000, sysUserModInts.Count);
         }
-        // [Fact]
-        // public async Task Group_API_Test()
-        // {
-        //     var ids = new[] {"200", "300"};
-        //     var dateOfMonths = new[] {202111, 202110};
-        //     var group = await _virtualDbContext.Set<SysUserSalary>()
-        //         .Where(o => ids.Contains(o.UserId) && dateOfMonths.Contains(o.DateOfMonth))
-        //         .ShardingGroupByAsync(g => new {UId = g.UserId}, g => new
-        //         {
-        //
-        //             GroupUserId = g.Key.UId,
-        //             Count = g.Count(),
-        //             TotalSalary = g.Sum(o => o.Salary),
-        //             AvgSalary = g.Average(o => o.Salary),
-        //             AvgSalaryDecimal = g.Average(o => o.SalaryDecimal),
-        //             MinSalary = g.Min(o => o.Salary),
-        //             MaxSalary = g.Max(o => o.Salary)
-        //         });
-        //     Assert.Equal(2, group.Count);
-        //     Assert.Equal(2, group[0].Count);
-        //     Assert.Equal(2260000, group[0].TotalSalary);
-        //     Assert.Equal(1130000, group[0].AvgSalary);
-        //     Assert.Equal(11300, group[0].AvgSalaryDecimal);
-        //     Assert.Equal(1120000, group[0].MinSalary);
-        //     Assert.Equal(1140000, group[0].MaxSalary);
-        // }
+        [Fact]
+        public async Task Group_API_Test()
+        {
+            var ids = new[] { "200", "300" };
+            var dateOfMonths = new[] { 202111, 202110 };
+            var group = await _virtualDbContext.Set<SysUserSalary>()
+                .Where(o => ids.Contains(o.UserId) && dateOfMonths.Contains(o.DateOfMonth))
+                .GroupBy(g => new { UId = g.UserId })
+                .Select(g => new
+                {
+
+                    GroupUserId = g.Key.UId,
+                    Count = g.Count(),
+                    TotalSalary = g.Sum(o => o.Salary),
+                    AvgSalary = g.Average(o => o.Salary),
+                    AvgSalaryDecimal = g.Average(o => o.SalaryDecimal),
+                    MinSalary = g.Min(o => o.Salary),
+                    MaxSalary = g.Max(o => o.Salary)
+                }).ToListAsync();
+            Assert.Equal(2, group.Count);
+            Assert.Equal(2, group[0].Count);
+            Assert.Equal(2260000, group[0].TotalSalary);
+            Assert.Equal(1130000, group[0].AvgSalary);
+            Assert.Equal(11300, group[0].AvgSalaryDecimal);
+            Assert.Equal(1120000, group[0].MinSalary);
+            Assert.Equal(1140000, group[0].MaxSalary);
+        }
+        [Fact]
+        public async Task Group_API_Test1()
+        {
+            var ids = new[] { "200", "300" };
+            var dateOfMonths = new[] { 202111, 202110 };
+            var group = await _virtualDbContext.Set<SysUserSalary>()
+                .Where(o => ids.Contains(o.UserId) && dateOfMonths.Contains(o.DateOfMonth))
+                .GroupBy(g => new { UId = g.UserId })
+                .Select(g => new
+                {
+
+                    GroupUserId = g.Key.UId,
+                    Count = g.Count(),
+                    TotalSalary = g.Sum(o => o.Salary),
+                    AvgSalary = g.Average(o => o.Salary),
+                    AvgSalaryDecimal = g.Average(o => o.SalaryDecimal),
+                    MinSalary = g.Min(o => o.Salary),
+                    MaxSalary = g.Max(o => o.Salary)
+                }).OrderBy(o=>o.TotalSalary).ToListAsync();
+            Assert.Equal(2, group.Count);
+            Assert.Equal(2, group[0].Count);
+            Assert.Equal("200", group[0].GroupUserId);
+            Assert.Equal(2260000, group[0].TotalSalary);
+            Assert.Equal(1130000, group[0].AvgSalary);
+            Assert.Equal(11300, group[0].AvgSalaryDecimal);
+            Assert.Equal(1120000, group[0].MinSalary);
+            Assert.Equal(1140000, group[0].MaxSalary);
+        }
+        [Fact]
+        public async Task Group_API_Test2()
+        {
+            var ids = new[] { "200", "300" };
+            var dateOfMonths = new[] { 202111, 202110 };
+            var group = await _virtualDbContext.Set<SysUserSalary>()
+                .Where(o => ids.Contains(o.UserId) && dateOfMonths.Contains(o.DateOfMonth))
+                .GroupBy(g => new { UId = g.UserId })
+                .Select(g => new
+                {
+
+                    GroupUserId = g.Key.UId,
+                    Count = g.Count(),
+                    TotalSalary = g.Sum(o => o.Salary),
+                    AvgSalary = g.Average(o => o.Salary),
+                    AvgSalaryDecimal = g.Average(o => o.SalaryDecimal),
+                    MinSalary = g.Min(o => o.Salary),
+                    MaxSalary = g.Max(o => o.Salary)
+                }).OrderByDescending(o=>o.TotalSalary).ToListAsync();
+            Assert.Equal(2, group.Count);
+            Assert.Equal(2, group[0].Count);
+            Assert.Equal("300", group[0].GroupUserId);
+            Assert.Equal(2690000, group[0].TotalSalary);
+            Assert.Equal(1345000, group[0].AvgSalary);
+            Assert.Equal(13450, group[0].AvgSalaryDecimal);
+            Assert.Equal(1330000, group[0].MinSalary);
+            Assert.Equal(1360000, group[0].MaxSalary);
+        }
+
+        [Fact]
+        public async Task Group_Recently_Test()
+        {
+            //var list =(from us in _virtualDbContext.Set<SysUserSalary>().Where(o => ids.Contains(o.UserId))
+            //          group us by new
+            //              {
+            //                  UserId=us.UserId
+            //              }
+            //              into g
+            //          select new
+            //              {
+            //                  UserId=g.Key.UserId,
+            //              DateOfMonth = g.Max(o=>o.DateOfMonth)
+            //              }).ToList();
+            //var y = list;
+
+            var ids = new List<string>() { "200", "300" };
+            List<SysUserSalary> result = new List<SysUserSalary>(ids.Count);
+            var routeFilter = new List<SysUserSalary>().AsQueryable().Where(o => ids.Contains(o.UserId));
+            var dataSourceRouteResult = new DataSourceRouteResult(new HashSet<string>() { _virtualDataSource.DefaultDataSourceName });
+            var tableRouteResults = _tableRouteRuleEngineFactory.Route(dataSourceRouteResult, routeFilter,new Dictionary<Type, IQueryable>(){{typeof(SysUserSalary),null}})
+                .RouteUnits
+                .Select(o => o.TableRouteResult.ReplaceTables.First().Tail).OrderByDescending(o => o).ToList();
+            foreach (var tableRouteResult in tableRouteResults)
+            {
+                if (ids.IsEmpty())
+                    break;
+                using (_shardingRouteManager.CreateScope())
+                {
+                    _shardingRouteManager.Current.TryCreateOrAddMustTail<SysUserSalary>(tableRouteResult);
+                    var queryable = _virtualDbContext.Set<SysUserSalary>().Where(o => ids.Contains(o.UserId))
+                        .GroupBy(o => new { o.UserId }, i => i,
+                            (i, u) => new
+                            {
+                                Data = u.OrderByDescending(o => o.DateOfMonth).FirstOrDefault()
+                            });
+                    var r = await queryable.ToListAsync();
+                    result.AddRange(r.Select(o => o.Data));
+                    var removeUserIds = result.Select(u => u.UserId).ToHashSet();
+                    ids.RemoveAll(o => removeUserIds.Contains(o));
+                }
+            }
+        }
     }
 }

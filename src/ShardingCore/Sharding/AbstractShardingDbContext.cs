@@ -11,8 +11,6 @@ using System.Data;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.EntityFrameworkCore.Infrastructure;
-using Microsoft.EntityFrameworkCore.Storage;
 using ShardingCore.Core.VirtualDatabase.VirtualDataSources;
 
 namespace ShardingCore.Sharding
@@ -27,7 +25,7 @@ namespace ShardingCore.Sharding
     /// <summary>
     /// 分表分库的dbcontext
     /// </summary>
-    public abstract class AbstractShardingDbContext : DbContext, IShardingDbContext, ISupportShardingReadWrite//,ICurrentDbContextDiscover
+    public abstract class AbstractShardingDbContext : DbContext, IShardingDbContext, ISupportShardingReadWrite,ICurrentDbContextDiscover
     {
         protected IShardingDbContextExecutor ShardingDbContextExecutor { get; }
 
@@ -37,9 +35,7 @@ namespace ShardingCore.Sharding
             var wrapOptionsExtension = options.FindExtension<ShardingWrapOptionsExtension>();
             if (wrapOptionsExtension != null)
             {
-                ShardingDbContextExecutor =
-                    (IShardingDbContextExecutor)Activator.CreateInstance(
-                        typeof(ShardingDbContextExecutor<>).GetGenericType0(this.GetType()),this);
+                ShardingDbContextExecutor = new ShardingDbContextExecutor(this);
             }
 
             IsExecutor = wrapOptionsExtension == null;
@@ -68,9 +64,9 @@ namespace ShardingCore.Sharding
 
 
 
-        public DbContext GetDbContext(string dataSourceName, bool parallelQuery, IRouteTail routeTail)
+        public DbContext GetDbContext(string dataSourceName, CreateDbContextStrategyEnum strategy, IRouteTail routeTail)
         {
-            return ShardingDbContextExecutor.CreateDbContext(parallelQuery, dataSourceName, routeTail);
+            return ShardingDbContextExecutor.CreateDbContext(strategy, dataSourceName, routeTail);
         }
 
         /// <summary>
@@ -383,13 +379,13 @@ namespace ShardingCore.Sharding
         //    entry.State = EntityState.Unchanged;
         //    genericDbContext.Entry(entry.Entity).State = entityState;
         //}
-        public override int SaveChanges()
-        {
-
-            if (IsExecutor)
-                return base.SaveChanges();
-            return this.SaveChanges(true);
-        }
+        // public override int SaveChanges()
+        // {
+        //
+        //     if (IsExecutor)
+        //         return base.SaveChanges();
+        //     return this.SaveChanges(true);
+        // }
 
         public override int SaveChanges(bool acceptAllChangesOnSuccess)
         {
@@ -415,12 +411,12 @@ namespace ShardingCore.Sharding
         }
 
 
-        public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = new CancellationToken())
-        {
-            if (IsExecutor)
-                return base.SaveChangesAsync(cancellationToken);
-            return this.SaveChangesAsync(true, cancellationToken);
-        }
+        // public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = new CancellationToken())
+        // {
+        //     if (IsExecutor)
+        //         return base.SaveChangesAsync(cancellationToken);
+        //     return this.SaveChangesAsync(true, cancellationToken);
+        // }
 
         public override async Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = new CancellationToken())
         {
@@ -505,10 +501,10 @@ namespace ShardingCore.Sharding
             ShardingDbContextExecutor.Commit();
         }
 
-        //public IDictionary<string, IDataSourceDbContext> GetCurrentDbContexts()
-        //{
-        //    return ShardingDbContextExecutor.GetCurrentDbContexts();
-        //}
+        public IDictionary<string, IDataSourceDbContext> GetCurrentDbContexts()
+        {
+            return ShardingDbContextExecutor.GetCurrentDbContexts();
+        }
         
     }
 }

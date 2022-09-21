@@ -15,7 +15,10 @@ using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using ShardingCore.Core;
 using ShardingCore.Core.EntityMetadatas;
+using ShardingCore.Core.RuntimeContexts;
 using ShardingCore.EFCores;
+using ShardingCore.EFCores.OptionsExtensions;
+using ShardingCore.Exceptions;
 using ShardingCore.Utils;
 
 namespace ShardingCore.Extensions
@@ -40,7 +43,8 @@ namespace ShardingCore.Extensions
 
             var contextModel = dbContext.Model as Model;
 #endif
-            var entityMetadataManager = (IEntityMetadataManager)ShardingContainer.GetService(typeof(IEntityMetadataManager<>).GetGenericType0(dbContext.GetType()));
+            var shardingRuntimeContext = dbContext.GetShardingRuntimeContext();
+            var entityMetadataManager = shardingRuntimeContext.GetEntityMetadataManager();
 
 #if EFCORE6
             var contextModelRelationalModel = contextModel.GetRelationalModel() as RelationalModel;
@@ -100,10 +104,10 @@ namespace ShardingCore.Extensions
         //#endif
         //        }
         /// <summary>
-        /// 移除所有的没有分片的表
+        /// 移除所有除了仅分库的
         /// </summary>
         /// <param name="dbContext"></param>
-        public static void RemoveDbContextAllRelationModelThatIsNoSharding(this DbContext dbContext)
+        public static void RemoveDbContextAllRelationModelWithoutShardingDataSourceOnly(this DbContext dbContext)
         {
 #if !EFCORE2&&!EFCORE3&&!EFCORE5&&!EFCORE6
             throw new NotImplementedException();
@@ -116,12 +120,13 @@ namespace ShardingCore.Extensions
 
             var contextModel = dbContext.Model as Model;
 #endif
-            var entityMetadataManager = (IEntityMetadataManager)ShardingContainer.GetService(typeof(IEntityMetadataManager<>).GetGenericType0(dbContext.GetType()));
+            var shardingRuntimeContext = dbContext.GetShardingRuntimeContext();
+            var entityMetadataManager = shardingRuntimeContext.GetEntityMetadataManager();
 
 #if EFCORE6
             var contextModelRelationalModel = contextModel.GetRelationalModel() as RelationalModel;
             var valueTuples =
-                contextModelRelationalModel.Tables.Where(o => o.Value.EntityTypeMappings.Any(m => entityMetadataManager.IsShardingTable(m.EntityType.ClrType) ||entityMetadataManager.TryGet(m.EntityType.ClrType)==null)).Select(o => o.Key).ToList();
+                contextModelRelationalModel.Tables.Where(o => o.Value.EntityTypeMappings.Any(m => !entityMetadataManager.IsShardingDataSource(m.EntityType.ClrType) ||entityMetadataManager.TryGet(m.EntityType.ClrType)==null)).Select(o => o.Key).ToList();
             for (int i = 0; i < valueTuples.Count; i++)
             {
                 contextModelRelationalModel.Tables.Remove(valueTuples[i]);
@@ -130,7 +135,7 @@ namespace ShardingCore.Extensions
 #if EFCORE5
             var contextModelRelationalModel = contextModel.RelationalModel as RelationalModel;
             var valueTuples =
- contextModelRelationalModel.Tables.Where(o => o.Value.EntityTypeMappings.Any(m => entityMetadataManager.IsShardingTable(m.EntityType.ClrType)||entityMetadataManager.TryGet(m.EntityType.ClrType)==null)).Select(o => o.Key).ToList();
+ contextModelRelationalModel.Tables.Where(o => o.Value.EntityTypeMappings.Any(m => !entityMetadataManager.IsShardingDataSource(m.EntityType.ClrType)||entityMetadataManager.TryGet(m.EntityType.ClrType)==null)).Select(o => o.Key).ToList();
             for (int i = 0; i < valueTuples.Count; i++)
             {
                 contextModelRelationalModel.Tables.Remove(valueTuples[i]);
@@ -139,7 +144,7 @@ namespace ShardingCore.Extensions
 #if EFCORE2 || EFCORE3
             var entityTypes =
                 contextModel.GetFieldValue("_entityTypes") as SortedDictionary<string, EntityType>;
-            var list = entityTypes.Where(o => entityMetadataManager.IsShardingTable(o.Value.ClrType) || entityMetadataManager.TryGet(o.Value.ClrType) == null).Select(o => o.Key).ToList();
+            var list = entityTypes.Where(o => !entityMetadataManager.IsShardingDataSource(o.Value.ClrType) || entityMetadataManager.TryGet(o.Value.ClrType) == null).Select(o => o.Key).ToList();
             for (int i = 0; i < list.Count; i++)
             {
                 entityTypes.Remove(list[i]);
@@ -187,15 +192,23 @@ namespace ShardingCore.Extensions
         public static void RemoveDbContextRelationModelSaveOnlyThatIsNamedType(this DbContext dbContext,
             Type shardingType)
         {
-#if !EFCORE2&&!EFCORE3&&!EFCORE5&&!EFCORE6
-            throw new NotImplementedException();
+#if !EFCORE2 && !EFCORE3 && !EFCORE5 && !EFCORE6
+            1
 #endif
 #if EFCORE2 ||EFCORE3 ||EFCORE5
 
             var contextModel = dbContext.Model as Model;
 #endif
 #if EFCORE6
-            var contextModel = dbContext.GetService<IDesignTimeModel>().Model; ;
+            var contextModel = dbContext.GetService<IDesignTimeModel>().Model;
+            var entityTypes = contextModel.GetEntityTypes();
+            foreach (var entityType in entityTypes)
+            {
+                if (entityType.GetFieldValue("_data") is List<object> _data)
+                {
+                    _data.Clear();
+                }
+            }
             var contextModelRelationalModel = contextModel.GetRelationalModel() as RelationalModel;
             var valueTuples =
                 contextModelRelationalModel.Tables
@@ -209,6 +222,15 @@ namespace ShardingCore.Extensions
 
 #if EFCORE5
             var contextModelRelationalModel = contextModel.RelationalModel as RelationalModel;
+            
+            var entityTypes = contextModel.GetEntityTypes();
+            foreach (var entityType in entityTypes)
+            {
+                if (entityType.GetFieldValue("_data") is List<object> _data)
+                {
+                    _data.Clear();
+                }
+            }
             var valueTuples = contextModelRelationalModel.Tables
                 .Where(o => o.Value.EntityTypeMappings.All(m => m.EntityType.ClrType != shardingType))
                 .Select(o => o.Key).ToList();
@@ -220,6 +242,14 @@ namespace ShardingCore.Extensions
 #if EFCORE2 || EFCORE3
             var entityTypes =
                 contextModel.GetFieldValue("_entityTypes") as SortedDictionary<string, EntityType>;
+            
+            foreach (var entityType in entityTypes)
+            {
+                if (entityType.Value.GetFieldValue("_data") is List<object> _data)
+                {
+                    _data.Clear();
+                }
+            }
             var list = entityTypes.Where(o=>o.Value.ClrType!=shardingType).Select(o=>o.Key).ToList();
             for (int i = 0; i < list.Count; i++)
             {
@@ -321,6 +351,18 @@ namespace ShardingCore.Extensions
             //sp.Stop();
             //Console.WriteLine($"ChangeTracker.FirstOrDefault:{sp.ElapsedMilliseconds}毫秒");
             //return entry?.Entity;
+        }
+
+        public static IShardingRuntimeContext GetShardingRuntimeContext(this DbContext dbContext)
+        {
+            var shardingRuntimeContext =  dbContext.GetService<IShardingRuntimeContext>();
+           
+            if (shardingRuntimeContext == null)
+            {
+                throw new ShardingCoreInvalidOperationException($"cant resolve:[{typeof(IShardingRuntimeContext)}],dbcontext:[{dbContext}]");
+            }
+
+            return shardingRuntimeContext;
         }
 
     }

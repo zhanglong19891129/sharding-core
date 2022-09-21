@@ -1,26 +1,40 @@
 ﻿using Microsoft.EntityFrameworkCore;
-using ShardingCore.Sharding.Abstractions;
 using ShardingCore.Sharding.ReadWriteConfigurations;
-using ShardingCore.Sharding.ShardingComparision;
-using ShardingCore.Sharding.ShardingComparision.Abstractions;
-using ShardingCore.TableExists;
-using ShardingCore.TableExists.Abstractions;
 using System;
 using System.Collections.Generic;
 using System.Data.Common;
+using ShardingCore.Core.ServiceProviders;
 
 namespace ShardingCore.Core.ShardingConfigurations
 {
-    public class ShardingConfigOptions<TShardingDbContext> where TShardingDbContext : DbContext, IShardingDbContext
+    /// <summary>
+    /// 分片配置
+    /// </summary>
+    public class ShardingConfigOptions
     {
         /// <summary>
-        /// 配置id,如果是单配置可以用guid代替,如果是多配置该属性表示每个配置的id
+        /// 写操作数据库后自动使用写库链接防止读库链接未同步无法查询到数据
         /// </summary>
-        public string ConfigId { get; set; }
+        public bool AutoUseWriteConnectionStringAfterWriteDb { get; set; } = false;
         /// <summary>
-        /// 优先级多个配置之间的优先级
+        /// 当查询遇到没有路由被命中时是否抛出错误
         /// </summary>
-        public int Priority { get; set; }
+        public bool ThrowIfQueryRouteNotMatch { get; set; } = true;
+
+        /// <summary>
+        /// 忽略建表时的错误
+        /// </summary>
+        public bool? IgnoreCreateTableError { get; set; } = false;
+        /// <summary>
+        /// 配置全局迁移最大并行数,以data source为一个单元并行迁移保证在多数据库分库情况下可以大大提高性能
+        /// 默认系统逻辑处理器<code>Environment.ProcessorCount</code>
+        /// </summary>
+        public int MigrationParallelCount { get; set; }= Environment.ProcessorCount;
+        /// <summary>
+        /// 启动补偿表的最大并行数,以data source为一个单元并行迁移保证在多数据库分库情况下可以大大提高性能
+        /// 默认系统逻辑处理器<code>Environment.ProcessorCount</code>
+        /// </summary>
+        public int CompensateTableParallelCount { get; set; }= Environment.ProcessorCount;
         /// <summary>
         /// 全局配置最大的查询连接数限制,默认系统逻辑处理器<code>Environment.ProcessorCount</code>
         /// </summary>
@@ -52,13 +66,13 @@ namespace ShardingCore.Core.ShardingConfigurations
             DefaultDataSourceName= dataSourceName?? throw new ArgumentNullException(nameof(dataSourceName));
             DefaultConnectionString = connectionString ?? throw new ArgumentNullException(nameof(connectionString));
         }
-        public Func<IServiceProvider, IDictionary<string, string>> DataSourcesConfigure { get; private set; }
+        public Func<IShardingProvider, IDictionary<string, string>> DataSourcesConfigure { get; private set; }
         /// <summary>
         /// 添加额外数据源
         /// </summary>
         /// <param name="extraDataSourceConfigure"></param>
         /// <exception cref="ArgumentNullException"></exception>
-        public void AddExtraDataSource(Func<IServiceProvider, IDictionary<string, string>> extraDataSourceConfigure)
+        public void AddExtraDataSource(Func<IShardingProvider, IDictionary<string, string>> extraDataSourceConfigure)
         {
             DataSourcesConfigure= extraDataSourceConfigure ?? throw new ArgumentNullException(nameof(extraDataSourceConfigure));
         }
@@ -72,7 +86,7 @@ namespace ShardingCore.Core.ShardingConfigurations
         /// <param name="readConnStringGetStrategy">LatestFirstTime:DbContext缓存,LatestEveryTime:每次都是最新</param>
         /// <exception cref="ArgumentNullException"></exception>
         public void AddReadWriteSeparation(
-            Func<IServiceProvider, IDictionary<string, IEnumerable<string>>> readWriteSeparationConfigure,
+            Func<IShardingProvider, IDictionary<string, IEnumerable<string>>> readWriteSeparationConfigure,
             ReadStrategyEnum readStrategyEnum,
             bool defaultEnable = false,
             int defaultPriority = 10,
@@ -85,8 +99,27 @@ namespace ShardingCore.Core.ShardingConfigurations
             ShardingReadWriteSeparationOptions.DefaultPriority= defaultPriority;
             ShardingReadWriteSeparationOptions.ReadConnStringGetStrategy= readConnStringGetStrategy;
         }
+        /// <summary>
+        /// 读写分离配置 和 AddReadWriteSeparation不同的是
+        /// 当前配置支持自定义读链接节点命名,命名的好处在于当使用读库链接的时候由于服务器性能的差异
+        /// 可以将部分吃性能的查询通过节点名称切换到对应的性能相对较好或者较空闲的读库服务器
+        /// <code><![CDATA[
+        /// IShardingReadWriteManager _readWriteManager=...
+        ///   using (_readWriteManager.CreateScope())
+        ///     {
+        ///         _readWriteManager.GetCurrent().SetReadWriteSeparation(100,true);
+        ///         _readWriteManager.GetCurrent().AddDataSourceReadNode("A", readNodeName);
+        ///         var xxxaaa = await _defaultTableDbContext.Set<SysUserSalary>().FirstOrDefaultAsync();
+        ///   }]]></code>
+        /// </summary>
+        /// <param name="readWriteNodeSeparationConfigure"></param>
+        /// <param name="readStrategyEnum"></param>
+        /// <param name="defaultEnable"></param>
+        /// <param name="defaultPriority"></param>
+        /// <param name="readConnStringGetStrategy"></param>
+        /// <exception cref="ArgumentNullException"></exception>
         public void AddReadWriteNodeSeparation(
-            Func<IServiceProvider, IDictionary<string, IEnumerable<ReadNode>>> readWriteNodeSeparationConfigure,
+            Func<IShardingProvider, IDictionary<string, IEnumerable<ReadNode>>> readWriteNodeSeparationConfigure,
             ReadStrategyEnum readStrategyEnum,
             bool defaultEnable = false,
             int defaultPriority = 10,
@@ -117,6 +150,29 @@ namespace ShardingCore.Core.ShardingConfigurations
         /// </summary>
         public Action<DbContextOptionsBuilder> ExecutorDbContextConfigure { get; private set; }
         /// <summary>
+        /// 分片迁移使用的配置
+        /// </summary>
+        
+        public Action<DbContextOptionsBuilder> ShardingMigrationConfigure { get; private set; }
+
+        /// <summary>
+        /// 添加分片迁移的配置
+        /// 当前配置只有在调用迁移代码时才会生效
+        /// <code><![CDATA[
+        /// using (var scope = app.ApplicationServices.CreateScope())
+        /// {
+        ///   var defaultShardingDbContext = scope.ServiceProvider.GetService<DefaultShardingDbContext>();
+        ///    defaultShardingDbContext.Database.Migrate();
+        /// }
+        /// ]]></code>
+        /// </summary>
+        /// <param name="configure"></param>
+        /// <exception cref="ArgumentNullException"></exception>
+        public void UseShardingMigrationConfigure(Action<DbContextOptionsBuilder> configure)
+        {
+            ShardingMigrationConfigure = configure ?? throw new ArgumentNullException(nameof(configure));
+        }
+        /// <summary>
         /// 如何使用字符串创建DbContext
         /// </summary>
         /// <param name="queryConfigure"></param>
@@ -144,7 +200,8 @@ namespace ShardingCore.Core.ShardingConfigurations
             ExecutorDbContextConfigure= executorDbContextConfigure ?? throw new ArgumentNullException(nameof(executorDbContextConfigure));
         }
         /// <summary>
-        /// 仅外部DbContext生效
+        /// 仅外部DbContext生效,如果是独立调用AddDbContext和AddShardingConfigure不一定生效
+        /// 会在AddShardingDbContext里面自动赋值
         /// </summary>
         /// <param name="shellDbContextConfigure"></param>
         /// <exception cref="ArgumentNullException"></exception>
@@ -152,27 +209,37 @@ namespace ShardingCore.Core.ShardingConfigurations
         {
             ShellDbContextConfigure = shellDbContextConfigure ?? throw new ArgumentNullException(nameof(shellDbContextConfigure));
         }
-        public Func<IServiceProvider, IShardingComparer> ReplaceShardingComparerFactory { get; private set; } = sp => new CSharpLanguageShardingComparer();
-        /// <summary>
-        /// 替换默认的比较器
-        /// </summary>
-        /// <param name="newShardingComparerFactory"></param>
-        /// <exception cref="ArgumentNullException"></exception>
-        public void ReplaceShardingComparer(Func<IServiceProvider, IShardingComparer> newShardingComparerFactory)
+
+        // public Func<IServiceProvider, ITableEnsureManager<TShardingDbContext>> TableEnsureManagerFactory =
+        //     sp => new EmptyTableEnsureManager<TShardingDbContext>();
+        //
+        // public void ReplaceTableEnsureManager(
+        //     Func<IServiceProvider, ITableEnsureManager<TShardingDbContext>> tableEnsureManagerConfigure)
+        // {
+        //     TableEnsureManagerFactory = tableEnsureManagerConfigure ??
+        //                                 throw new ArgumentNullException(nameof(tableEnsureManagerConfigure));
+        // }
+
+        public void CheckArguments()
         {
-            ReplaceShardingComparerFactory = newShardingComparerFactory ?? throw new ArgumentNullException(nameof(newShardingComparerFactory));
+            if (string.IsNullOrWhiteSpace(DefaultDataSourceName))
+                throw new ArgumentNullException(
+                    $"{nameof(DefaultDataSourceName)} plz call {nameof(AddDefaultDataSource)}");
+            
+            if (string.IsNullOrWhiteSpace(DefaultConnectionString))
+                throw new ArgumentNullException(
+                    $"{nameof(DefaultConnectionString)} plz call {nameof(AddDefaultDataSource)}");
+
+            if (ConnectionStringConfigure is null)
+                throw new ArgumentNullException($"plz call {nameof(UseShardingQuery)}");
+            if (ConnectionConfigure is null )
+                throw new ArgumentNullException(
+                    $"plz call {nameof(UseShardingTransaction)}");
+
+            if (MaxQueryConnectionsLimit <= 0)
+                throw new ArgumentException(
+                    $"{nameof(MaxQueryConnectionsLimit)} should greater than and equal 1");
         }
-
-        public Func<IServiceProvider, ITableEnsureManager<TShardingDbContext>> TableEnsureManagerFactory =
-            sp => new EmptyTableEnsureManager<TShardingDbContext>();
-
-        public void ReplaceTableEnsureManager(
-            Func<IServiceProvider, ITableEnsureManager<TShardingDbContext>> tableEnsureManagerConfigure)
-        {
-            TableEnsureManagerFactory = tableEnsureManagerConfigure ??
-                                        throw new ArgumentNullException(nameof(tableEnsureManagerConfigure));
-        }
-
 
     }
 }

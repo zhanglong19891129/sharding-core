@@ -2,8 +2,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using ShardingCore;
-using ShardingCore.Bootstrapers;
-using ShardingCore.Core.VirtualDatabase.VirtualTables;
 using ShardingCore.Extensions;
 using ShardingCore6x.NoShardingDbContexts;
 using ShardingCore6x.ShardingDbContexts;
@@ -16,10 +14,10 @@ namespace ShardingCore6x
     {
         private readonly DefaultDbContext _defaultDbContext;
         private readonly DefaultShardingDbContext _defaultShardingDbContext;
-        private readonly IVirtualTableManager<DefaultShardingDbContext> _virtualTableManager;
+        private readonly ServiceCollection services;
         public EFCoreCrud()
         {
-            var services = new ServiceCollection();
+            services = new ServiceCollection();
 
             services.AddDbContext<DefaultDbContext>(o => o
                 //.UseMySql("server=127.0.0.1;port=3306;database=db1;userid=root;password=L6yBtV6qNENrwBy7;", new MySqlServerVersion(new Version()))
@@ -28,15 +26,12 @@ namespace ShardingCore6x
             services.AddLogging();
 
             services.AddShardingDbContext<DefaultShardingDbContext>(ServiceLifetime.Transient, ServiceLifetime.Transient)
-                .AddEntityConfig(o =>
+                .UseRouteConfig(o =>
                 {
-                    o.CreateShardingTableOnStart = true;
-                    o.EnsureCreatedWithOutShardingTable = true;
                     o.AddShardingTableRoute<OrderVirtualTableRoute>();
                 })
-                .AddConfig(op =>
+                .UseConfig(op =>
                 {
-                    op.ConfigId = "c1";
                     op.UseShardingQuery((conStr, builder) =>
                     {
                         builder.UseSqlServer(conStr);
@@ -50,12 +45,13 @@ namespace ShardingCore6x
                     op.AddDefaultDataSource("ds0",
                         "Data Source=localhost;Initial Catalog=db2;Integrated Security=True;");
 
-                    //op.AddDefaultDataSource("ds0", "server=127.0.0.1;port=3306;database=db2;userid=root;password=L6yBtV6qNENrwBy7;")
+                    //op.AddDefaultDataSource("ds0", "server=127.0.0.1;port=3306;database=db2;userid=root;password=L6yBtV6qNENrwBy7;");
 
-                }).EnsureConfig();
+                }).AddShardingCore();
 
             var buildServiceProvider = services.BuildServiceProvider();
-            buildServiceProvider.GetRequiredService<IShardingBootstrapper>().Start();
+            buildServiceProvider.UseAutoShardingCreate();
+            buildServiceProvider.UseAutoTryCompensateTable();
             ICollection<Order> orders = new LinkedList<Order>();
 
             using (var scope = buildServiceProvider.CreateScope())
@@ -106,9 +102,8 @@ namespace ShardingCore6x
                     Console.WriteLine($"批量插入订单数据:{orders.Count},用时:{sp.ElapsedMilliseconds}");
                 }
             }
-            _defaultDbContext = ShardingContainer.GetService<DefaultDbContext>();
-            _defaultShardingDbContext = ShardingContainer.GetService<DefaultShardingDbContext>();
-            _virtualTableManager = ShardingContainer.GetService<IVirtualTableManager<DefaultShardingDbContext>>();
+            _defaultDbContext = buildServiceProvider.GetService<DefaultDbContext>();
+            _defaultShardingDbContext = buildServiceProvider.GetService<DefaultShardingDbContext>();
 
         }
 

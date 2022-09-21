@@ -17,6 +17,7 @@ using Volo.Abp.Domain.Entities;
 using Volo.Abp.EntityFrameworkCore;
 using Volo.Abp.Reflection;
 using ShardingCore.Core.VirtualDatabase.VirtualDataSources;
+using ShardingCore.Sharding;
 
 namespace Samples.AbpSharding
 {
@@ -31,9 +32,7 @@ namespace Samples.AbpSharding
             var wrapOptionsExtension = options.FindExtension<ShardingWrapOptionsExtension>();
             if (wrapOptionsExtension != null)
             {
-                _shardingDbContextExecutor =
-                    (IShardingDbContextExecutor)Activator.CreateInstance(
-                        typeof(ShardingDbContextExecutor<>).GetGenericType0(this.GetType()), this);
+                _shardingDbContextExecutor = new ShardingDbContextExecutor(this);
             }
         }
 
@@ -65,10 +64,10 @@ namespace Samples.AbpSharding
         //    //IsExecutor = true;
         //}
 
-        public DbContext GetDbContext(string dataSourceName, bool parallelQuery, IRouteTail routeTail)
+        public DbContext GetDbContext(string dataSourceName, CreateDbContextStrategyEnum strategy, IRouteTail routeTail)
         {
-            var dbContext = _shardingDbContextExecutor.CreateDbContext(parallelQuery, dataSourceName, routeTail);
-            if (!parallelQuery && dbContext is AbpDbContext<TDbContext> abpDbContext)
+            var dbContext = _shardingDbContextExecutor.CreateDbContext(strategy, dataSourceName, routeTail);
+            if (dbContext is AbpDbContext<TDbContext> abpDbContext)
             {
                 abpDbContext.LazyServiceProvider = this.LazyServiceProvider;
             }

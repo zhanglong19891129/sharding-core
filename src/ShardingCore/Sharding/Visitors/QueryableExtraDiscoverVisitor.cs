@@ -2,10 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
-using ShardingCore.Core.Internal.Visitors.Selects;
 using ShardingCore.Exceptions;
 using ShardingCore.Extensions;
 using ShardingCore.Sharding.MergeContexts;
+using ShardingCore.Sharding.ShardingExecutors.Abstractions;
 using ShardingCore.Sharding.Visitors.Selects;
 
 namespace ShardingCore.Core.Internal.Visitors
@@ -18,12 +18,16 @@ namespace ShardingCore.Core.Internal.Visitors
     */
     internal class QueryableExtraDiscoverVisitor : ShardingExpressionVisitor
     {
+        private readonly IMergeQueryCompilerContext _mergeQueryCompilerContext;
         private GroupByContext _groupByContext = new GroupByContext();
         private SelectContext _selectContext = new SelectContext();
         private PaginationContext _paginationContext = new PaginationContext();
         private OrderByContext _orderByContext = new OrderByContext();
 
-
+        public QueryableExtraDiscoverVisitor(IMergeQueryCompilerContext mergeQueryCompilerContext)
+        {
+            _mergeQueryCompilerContext = mergeQueryCompilerContext;
+        }
         public SelectContext GetSelectContext()
         {
             return _selectContext;
@@ -36,6 +40,11 @@ namespace ShardingCore.Core.Internal.Visitors
 
         public PaginationContext GetPaginationContext()
         {
+            var fixedTake = _mergeQueryCompilerContext.GetFixedTake();
+            if (fixedTake.HasValue)
+            {
+                _paginationContext.ReplaceToFixedTake(fixedTake.Value);
+            }
             return _paginationContext;
         }
         public OrderByContext GetOrderByContext()
@@ -50,19 +59,33 @@ namespace ShardingCore.Core.Internal.Visitors
             {
                 if (_paginationContext.HasSkip())
                     throw new ShardingCoreInvalidOperationException("more than one skip found");
-                _paginationContext.Skip = (int)GetExpressionValue(node.Arguments[1]);
+                var skip = (int)GetExpressionValue(node.Arguments[1]);
+                _paginationContext.AddSkip(skip);
             }
             else if (node.Method.Name == nameof(Queryable.Take))
             {
                 if (_paginationContext.HasTake())
                     throw new ShardingCoreInvalidOperationException("more than one take found");
-                _paginationContext.Take = (int)GetExpressionValue(node.Arguments[1]);
+                var take = (int)GetExpressionValue(node.Arguments[1]);
+                _paginationContext.AddTake(take);
             }
             else if (method.Name == nameof(Queryable.OrderBy) || method.Name == nameof(Queryable.OrderByDescending) || method.Name == nameof(Queryable.ThenBy) || method.Name == nameof(Queryable.ThenByDescending))
             {
                 if (typeof(IOrderedQueryable).IsAssignableFrom(node.Type))
                 {
-                    var expression = (((node.Arguments[1] as UnaryExpression).Operand as LambdaExpression).Body as MemberExpression);
+                    MemberExpression expression =null;
+                    var orderbody = ((node.Arguments[1] as UnaryExpression).Operand as LambdaExpression).Body;
+                    if(orderbody is MemberExpression orderMemberExpression)
+                    {
+                        expression = orderMemberExpression;
+                    } 
+                    else if (orderbody.NodeType == ExpressionType.Convert&&orderbody is UnaryExpression orderUnaryExpression)
+                    {
+                        if(orderUnaryExpression.Operand is MemberExpression orderMemberConvertExpression)
+                        {
+                            expression = orderMemberConvertExpression;
+                        }
+                    }
                     if (expression == null)
                         throw new NotSupportedException("sharding order not support ");
                     List<string> properties = new List<string>();

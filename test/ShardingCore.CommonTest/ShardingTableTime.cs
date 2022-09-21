@@ -8,6 +8,7 @@ using Xunit;
 
 namespace ShardingCore.CommonTest
 {
+
     
     public class ShardingTableTime
     {
@@ -15,8 +16,7 @@ namespace ShardingCore.CommonTest
         private readonly List<string> _allTables;
         public ShardingTableTime()
         { 
-            var entityMetadata = new EntityMetadata(typeof(TestTimeEntity), nameof(TestTimeEntity), typeof(ShardingDataSourceMod),
-                new ReadOnlyCollection<PropertyInfo>(typeof(TestTimeEntity).GetProperties().ToList()), null);
+            var entityMetadata = new EntityMetadata(typeof(TestTimeEntity));
             var entityMetadataTableBuilder = EntityMetadataTableBuilder<TestTimeEntity>.CreateEntityMetadataTableBuilder(entityMetadata);
             entityMetadataTableBuilder.ShardingProperty(o => o.Time);
             entityMetadata.CheckShardingTableMetadata();
@@ -92,9 +92,15 @@ namespace ShardingCore.CommonTest
             var id = "1";
             var times = new []{queryTime};
             var times1 = new List<DateTime>(){queryTime};
+            var times2 = new []{queryTime,queryTime2};
             var obj1 = new {time=new DateTime(2022, 1, 2)};
             var queryables=new List<IQueryable<TestTimeEntity>>()
             {
+                new List<TestTimeEntity>().AsQueryable().Where(o=>o.Time== new DateTime(2022, 1, 2)),
+                new List<TestTimeEntity>().AsQueryable().CheckBetween((DateTime?)queryTime,(DateTime?)queryTime3,o=>o.Time),
+                new List<TestTimeEntity>().AsQueryable().Where(o=>o.Time==times2[0]),
+                new List<TestTimeEntity>().AsQueryable().Where(o=>o.Time>=times2[0]&&o.Time<times2[1]),
+                new List<TestTimeEntity>().AsQueryable().Where(o=>o.Time>=queryTime&&o.Time<queryTime2),
                 new List<TestTimeEntity>().AsQueryable().Where(o=>o.Time==queryTime),
                 new List<TestTimeEntity>().AsQueryable().Where(o=>o.Time>=queryTime&&o.Time<queryTime2),
                 new List<TestTimeEntity>().AsQueryable().Where(o=>o.Time>=queryTime&&o.Time<queryTime3),

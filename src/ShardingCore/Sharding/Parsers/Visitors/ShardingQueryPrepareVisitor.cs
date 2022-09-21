@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Query;
+using ShardingCore.Core;
 using ShardingCore.Core.TrackerManagers;
 using ShardingCore.Extensions;
 using ShardingCore.Extensions.ShardingQueryableExtensions;
@@ -22,6 +23,9 @@ namespace ShardingCore.Sharding.Parsers.Visitors
     /// Author: xjm
     /// Created: 2022/5/1 21:43:12
     /// Email: 326308290@qq.com
+#if !EFCORE2 && !EFCORE3 && !EFCORE5 && !EFCORE6
+    error
+#endif
     internal class ShardingQueryPrepareVisitor : ExpressionVisitor
     {
         private readonly IShardingDbContext _shardingDbContext;
@@ -41,7 +45,8 @@ namespace ShardingCore.Sharding.Parsers.Visitors
         public ShardingQueryPrepareVisitor(IShardingDbContext shardingDbContext)
         {
             _shardingDbContext = shardingDbContext;
-            _trackerManager = ShardingContainer.GetTrackerManager(shardingDbContext.GetType());
+            _trackerManager =((DbContext)shardingDbContext).GetShardingRuntimeContext()
+                .GetTrackerManager();
         }
         public ShardingPrepareResult GetShardingPrepareResult()
         {

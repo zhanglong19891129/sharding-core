@@ -1,15 +1,9 @@
-using ShardingCore.Core.EntityMetadatas;
-using ShardingCore.Core.PhysicTables;
-using ShardingCore.Core.VirtualDatabase.VirtualDataSources;
-using ShardingCore.Core.VirtualDatabase.VirtualTables;
 using ShardingCore.Core.VirtualRoutes;
-using ShardingCore.Extensions;
 using ShardingCore.Helpers;
-using ShardingCore.TableCreator;
 using ShardingCore.VirtualRoutes.Abstractions;
 using System;
 using System.Collections.Generic;
-using System.Linq.Expressions;
+using System.Linq;
 
 namespace ShardingCore.VirtualRoutes.Weeks
 {
@@ -23,10 +17,10 @@ namespace ShardingCore.VirtualRoutes.Weeks
     {
 
         public abstract DateTime GetBeginTime();
-        public override List<string> GetAllTails()
+        protected override List<string> CalcTailsOnStart()
         {
-            var beginTime = GetBeginTime().Date;
-         
+            var beginTime = ShardingCoreHelper.GetCurrentMonday(GetBeginTime()).Date;
+
             var tails=new List<string>();
             //提前创建表
             var nowTimeStamp = DateTime.Now.Date;
@@ -87,6 +81,11 @@ namespace ShardingCore.VirtualRoutes.Weeks
                 "0 0 0 ? * 2",
                 "0 1 0 ? * 2",
             };
+        }
+        public override string[] GetJobCronExpressions()
+        {
+            var crons = base.GetJobCronExpressions().Concat(new []{"0 0 0 ? * 2"}).Distinct().ToArray();
+            return crons;
         }
     }
 }
